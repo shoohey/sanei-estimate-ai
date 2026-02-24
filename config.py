@@ -8,8 +8,12 @@ load_dotenv()
 # プロジェクトルート
 BASE_DIR = Path(__file__).resolve().parent
 
-# API設定
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+# API設定（Streamlit Cloud secrets にも対応）
+try:
+    import streamlit as st
+    ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", "") or os.getenv("ANTHROPIC_API_KEY", "")
+except Exception:
+    ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
 
 # パス定数
