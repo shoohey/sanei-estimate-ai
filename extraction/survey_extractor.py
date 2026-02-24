@@ -7,7 +7,8 @@ from models.survey_data import (
     LocationType, BTPlacement, CInstallation, ConfidenceLevel,
 )
 from extraction.pdf_reader import pdf_to_images
-from config import ANTHROPIC_API_KEY, CLAUDE_MODEL
+import config
+from config import CLAUDE_MODEL
 
 SURVEY_EXTRACTION_PROMPT = """あなたは太陽光発電設備の現地調査シート（現調シート）を読み取る専門家です。
 手書きの日本語を高精度で読み取ってください。
@@ -108,7 +109,7 @@ def extract_survey_data(pdf_path: str) -> SurveyData:
     pages = pdf_to_images(pdf_path, dpi=200)
 
     # Claude Vision APIで読み取り
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
 
     # 全ページを一度に送信
     content = []
