@@ -1,0 +1,48 @@
+# =====================================================
+# 見積明細 品目テンプレート
+# =====================================================
+# カテゴリごとのデフォルト項目テンプレート
+# pricing_rules.yaml と組み合わせて使用
+
+categories:
+  - number: 1
+    name: "支給品"
+    description: "御支給品（施主から支給される機器・材料）"
+    always_zero: true
+
+  - number: 2
+    name: "材料費"
+    description: "施工に必要な材料・部材の費用"
+
+  - number: 3
+    name: "施工費"
+    description: "施工作業に関する費用"
+
+  - number: 4
+    name: "その他・諸経費等"
+    description: "諸経費、管理費、その他費用"
+
+  - number: 5
+    name: "付帯工事"
+    description: "本体工事以外の付帯的な工事費用"
+
+  - number: 6
+    name: "特記事項"
+    description: "特記事項（通常は空）"
+
+# 備考テンプレート
+remarks_templates:
+  pcs_model: "SUN2000-50KTL-NHM3"
+  down_transformer: "鶴田電機（50KVA）"
+  pv_cable: "PVCC"
+  monitoring: "スマートロガー"
+  crane_type: "ラフタークレーン25T"
+
+# 数量単位の定義
+quantity_units:
+  - "式"
+  - "枚"
+  - "台"
+  - "面"
+  - "m"
+  - "巻"

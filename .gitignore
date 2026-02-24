@@ -1,0 +1,19 @@
+.env
+__pycache__/
+*.pyc
+.DS_Store
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.tmp
+/tmp/
+
+# サンプルデータ（大容量）
+sample/
+*.pdf
+*.jpg
+*.jpeg
+*.png
+!assets/**
