@@ -653,22 +653,13 @@ def _render_step1_direct_input():
 def _render_step1_pdf_upload():
     st.markdown('<div style="margin-bottom:0.5rem;"><span style="font-size:1.25rem;font-weight:700;color:#1B2D45;">📄 現調シートPDFアップロード</span></div>', unsafe_allow_html=True)
 
-    # API Key チェック（Streamlit Cloud secrets / .env / 手動入力）
-    api_key = config.ANTHROPIC_API_KEY
-    if not api_key:
-        # Streamlit secrets から再取得を試みる
-        try:
-            if "ANTHROPIC_API_KEY" in st.secrets:
-                api_key = st.secrets["ANTHROPIC_API_KEY"]
-                config.ANTHROPIC_API_KEY = api_key
-        except Exception:
-            pass
+    # API Key チェック
+    api_key = config.get_api_key()
     if not api_key:
         st.error("ANTHROPIC_API_KEY が設定されていません。")
         api_key = st.text_input("API Key を入力（一時的に使用）", type="password")
         if api_key:
             os.environ["ANTHROPIC_API_KEY"] = api_key
-            config.ANTHROPIC_API_KEY = api_key
 
     col1, col2 = st.columns([2, 1])
     with col1:

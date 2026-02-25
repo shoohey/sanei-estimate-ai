@@ -9,18 +9,19 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent
 
 # API設定（Streamlit Cloud secrets にも対応）
-def _get_api_key() -> str:
+def get_api_key() -> str:
+    """毎回呼び出し時にAPIキーを取得する"""
     # 1. Streamlit Cloud secrets
     try:
         import streamlit as st
-        if hasattr(st, "secrets") and "ANTHROPIC_API_KEY" in st.secrets:
-            return st.secrets["ANTHROPIC_API_KEY"]
+        key = st.secrets.get("ANTHROPIC_API_KEY", "")
+        if key:
+            return key
     except Exception:
         pass
     # 2. 環境変数 / .env
     return os.getenv("ANTHROPIC_API_KEY", "")
 
-ANTHROPIC_API_KEY = _get_api_key()
 CLAUDE_MODEL = "claude-sonnet-4-20250514"
 
 # パス定数
