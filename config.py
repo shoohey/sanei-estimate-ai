@@ -11,12 +11,10 @@ BASE_DIR = Path(__file__).resolve().parent
 # API設定（Streamlit Cloud secrets にも対応）
 def get_api_key() -> str:
     """毎回呼び出し時にAPIキーを取得する"""
-    # 1. Streamlit Cloud secrets
+    # 1. Streamlit Cloud secrets（直接ブラケットアクセス）
     try:
         import streamlit as st
-        key = st.secrets.get("ANTHROPIC_API_KEY", "")
-        if key:
-            return key
+        return st.secrets["ANTHROPIC_API_KEY"]
     except Exception:
         pass
     # 2. 環境変数 / .env
