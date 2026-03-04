@@ -12,7 +12,7 @@ from models.survey_data import (
 )
 from models.estimate_data import EstimateData, CategoryType
 from extraction.pdf_reader import pdf_to_images
-from extraction.survey_extractor import extract_survey_data
+from extraction.survey_extractor import extract_survey_data, extract_survey_data_multi
 from extraction.survey_validator import validate_survey_data
 from generation.estimate_builder import build_estimate, update_line_item
 from generation.pdf_generator import generate_pdf
@@ -381,6 +381,7 @@ def _init_session():
         "estimate_data": None,
         "pdf_images": None,
         "pdf_bytes": None,
+        "tmp_pdf_paths": [],
         "client_name": "",
     }
     for k, v in defaults.items():
@@ -651,7 +652,7 @@ def _render_step1_direct_input():
 # Step 1B: PDFアップロードモード
 # =============================================================
 def _render_step1_pdf_upload():
-    st.markdown('<div style="margin-bottom:0.5rem;"><span style="font-size:1.25rem;font-weight:700;color:#1B2D45;">📄 現調シートPDFアップロード</span></div>', unsafe_allow_html=True)
+    st.markdown('<div style="margin-bottom:0.5rem;"><span style="font-size:1.25rem;font-weight:700;color:#1B2D45;">📄 図面・現調シートPDFアップロード</span></div>', unsafe_allow_html=True)
 
     # API Key チェック
     api_key = config.get_api_key()
@@ -663,30 +664,43 @@ def _render_step1_pdf_upload():
 
     col1, col2 = st.columns([2, 1])
     with col1:
-        uploaded_file = st.file_uploader(
-            "現調シートPDF をアップロード", type=["pdf"],
-            help="手書きの現調シートPDFをアップロードしてください")
+        uploaded_files = st.file_uploader(
+            "PDFをアップロード（複数可）", type=["pdf"],
+            accept_multiple_files=True,
+            help="現調シート・配管図・単線結線図など、関連するPDFをまとめてアップロードできます")
     with col2:
         st.session_state.client_name = st.text_input(
             "宛先会社名", value=st.session_state.client_name,
             placeholder="例: 株式会社アローズ")
 
-    if uploaded_file:
-        st.subheader("アップロードされたPDF")
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-            tmp.write(uploaded_file.getvalue())
-            tmp_path = tmp.name
+    if uploaded_files:
+        st.subheader(f"アップロードされたPDF（{len(uploaded_files)}件）")
+
+        # 各ファイルを一時保存し画像変換
+        tmp_paths = []
+        all_images = []
+        file_names = []
+
+        for uploaded_file in uploaded_files:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                tmp.write(uploaded_file.getvalue())
+                tmp_paths.append(tmp.name)
+                file_names.append(uploaded_file.name)
 
         try:
-            images = pdf_to_images(tmp_path, dpi=150)
-            st.session_state.pdf_images = images
-            st.session_state.tmp_pdf_path = tmp_path
+            for i, (tmp_path, fname) in enumerate(zip(tmp_paths, file_names)):
+                images = pdf_to_images(tmp_path, dpi=150)
+                all_images.extend(images)
 
-            page_cols = st.columns(min(len(images), 3))
-            for i, (col, img) in enumerate(zip(page_cols, images)):
-                with col:
-                    st.image(img["image_bytes"], caption=f"ページ {img['page']}",
-                             use_container_width=True)
+                st.markdown(f'<div style="background:#f1f5f9;padding:6px 12px;border-radius:6px;margin:4px 0;font-size:0.85rem;font-weight:500;color:#475569;">📎 {fname}（{len(images)}ページ）</div>', unsafe_allow_html=True)
+                page_cols = st.columns(min(len(images), 3))
+                for j, (col, img) in enumerate(zip(page_cols, images)):
+                    with col:
+                        st.image(img["image_bytes"], caption=f"ページ {img['page']}",
+                                 use_container_width=True)
+
+            st.session_state.pdf_images = all_images
+            st.session_state.tmp_pdf_paths = tmp_paths
         except Exception as e:
             st.error(f"PDFの読み取りに失敗しました: {e}")
             return
@@ -698,10 +712,12 @@ def _render_step1_pdf_upload():
                 st.session_state.step = 0
                 st.rerun()
         with col_read:
-            if st.button("🔍 AI読み取り開始", type="primary", use_container_width=True):
-                with st.spinner("Claude AI で現調シートを読み取り中...（20〜30秒）"):
+            file_count = len(uploaded_files)
+            label = f"🔍 AI読み取り開始（{file_count}件の書類を解析）"
+            if st.button(label, type="primary", use_container_width=True):
+                with st.spinner("Claude AI で書類を読み取り中...（20〜40秒）"):
                     try:
-                        survey = extract_survey_data(tmp_path)
+                        survey = extract_survey_data_multi(tmp_paths)
                         st.session_state.survey_data = survey
                         st.session_state.step = 2
                         st.rerun()
