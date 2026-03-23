@@ -1,5 +1,8 @@
 """Claude Vision APIで現調シートの手書きOCR（複数文書タイプ対応）"""
 import json
+import re
+import time
+import logging
 import anthropic
 from models.survey_data import (
     SurveyData, ProjectInfo, PlannedEquipment, HighVoltageChecklist,
@@ -8,6 +11,15 @@ from models.survey_data import (
 )
 from extraction.pdf_reader import pdf_to_images
 from config import get_api_key, CLAUDE_MODEL
+
+logger = logging.getLogger(__name__)
+
+# APIリトライ設定
+MAX_RETRIES = 3
+RETRY_DELAY_SEC = 2  # 初回待機秒（指数バックオフ）
+
+# ページ数上限（多すぎるとAPI制限に引っかかる）
+MAX_TOTAL_PAGES = 20
 
 SURVEY_EXTRACTION_PROMPT = """あなたは太陽光発電設備の現地調査シート（現調シート）を読み取る専門家です。
 手書きの日本語を高精度で読み取ってください。
@@ -207,23 +219,39 @@ def extract_survey_data_multi(pdf_paths: list[str]) -> SurveyData:
     """複数PDFからデータを統合抽出
 
     現調シート・配管図・単線結線図など複数種類の文書に対応。
+    リトライ機構付き。
 
     Args:
         pdf_paths: PDFファイルパスのリスト
 
     Returns:
         SurveyData: 抽出された現調データ
+
+    Raises:
+        RuntimeError: 全リトライ失敗時
     """
     # 全PDFを画像に変換
     all_pages = []
     for pdf_path in pdf_paths:
-        pages = pdf_to_images(pdf_path, dpi=200)
-        all_pages.extend(pages)
+        try:
+            pages = pdf_to_images(pdf_path, dpi=200)
+            all_pages.extend(pages)
+        except Exception as e:
+            logger.error(f"PDF画像変換エラー: {pdf_path}: {e}")
+            raise RuntimeError(
+                f"PDFファイルを画像に変換できませんでした。"
+                f"ファイルが破損していないか確認してください: {e}"
+            ) from e
 
-    # Claude Vision APIで読み取り
-    client = anthropic.Anthropic(api_key=get_api_key())
+    if not all_pages:
+        raise RuntimeError("PDFからページを読み取れませんでした。ファイルが空でないか確認してください。")
 
-    # 全ページを一度に送信
+    # ページ数上限チェック
+    if len(all_pages) > MAX_TOTAL_PAGES:
+        logger.warning(f"ページ数が上限を超えています（{len(all_pages)}ページ）。先頭{MAX_TOTAL_PAGES}ページのみ処理します。")
+        all_pages = all_pages[:MAX_TOTAL_PAGES]
+
+    # Claude Vision APIで読み取り（リトライ付き）
     content = []
     for page in all_pages:
         content.append({
@@ -243,9 +271,42 @@ def extract_survey_data_multi(pdf_paths: list[str]) -> SurveyData:
         "text": prompt,
     })
 
+    last_error = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            raw_data = _call_claude_api(content, attempt)
+            survey = _parse_raw_data(raw_data)
+            return survey
+        except (json.JSONDecodeError, ValueError) as e:
+            last_error = e
+            logger.warning(f"読み取り試行 {attempt}/{MAX_RETRIES} - JSON解析エラー: {e}")
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY_SEC * attempt)
+        except anthropic.APIError as e:
+            last_error = e
+            logger.warning(f"読み取り試行 {attempt}/{MAX_RETRIES} - APIエラー: {e}")
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY_SEC * attempt)
+        except Exception as e:
+            last_error = e
+            logger.warning(f"読み取り試行 {attempt}/{MAX_RETRIES} - エラー: {e}")
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY_SEC * attempt)
+
+    raise RuntimeError(
+        f"AI読み取りに{MAX_RETRIES}回失敗しました。"
+        f"PDFの内容が複雑すぎるか、一時的なAPI障害の可能性があります。"
+        f"しばらく待ってから再度お試しください。\n詳細: {last_error}"
+    )
+
+
+def _call_claude_api(content: list[dict], attempt: int) -> dict:
+    """Claude Vision APIを呼び出してJSONレスポンスを返す"""
+    client = anthropic.Anthropic(api_key=get_api_key())
+
     response = client.messages.create(
         model=CLAUDE_MODEL,
-        max_tokens=4096,
+        max_tokens=8192,
         messages=[{
             "role": "user",
             "content": content,
@@ -254,30 +315,41 @@ def extract_survey_data_multi(pdf_paths: list[str]) -> SurveyData:
 
     # レスポンスからJSONを抽出
     response_text = response.content[0].text
+    logger.info(f"API応答（試行{attempt}）: {response_text[:200]}...")
     json_str = _extract_json(response_text)
     raw_data = json.loads(json_str)
-
-    # Pydanticモデルに変換
-    survey = _parse_raw_data(raw_data)
-    return survey
+    return raw_data
 
 
 def _extract_json(text: str) -> str:
-    """レスポンステキストからJSONを抽出"""
-    # ```json ... ``` ブロックを探す
-    if "```json" in text:
-        start = text.index("```json") + 7
-        end = text.index("```", start)
-        return text[start:end].strip()
-    elif "```" in text:
-        start = text.index("```") + 3
-        end = text.index("```", start)
-        return text[start:end].strip()
-    # JSONブロックがない場合、テキスト全体をJSONとして扱う
+    """レスポンステキストからJSONを抽出（複数パターン対応）"""
+    # 1. ```json ... ``` ブロックを探す
+    json_block = re.search(r"```json\s*\n?(.*?)```", text, re.DOTALL)
+    if json_block:
+        return json_block.group(1).strip()
+
+    # 2. ``` ... ``` ブロック（言語指定なし）
+    code_block = re.search(r"```\s*\n?(.*?)```", text, re.DOTALL)
+    if code_block:
+        candidate = code_block.group(1).strip()
+        if candidate.startswith("{"):
+            return candidate
+
+    # 3. テキスト中の最初の{...}ブロックを抽出
     text = text.strip()
-    if text.startswith("{"):
-        return text
-    raise ValueError(f"JSONが見つかりません: {text[:200]}")
+    brace_start = text.find("{")
+    if brace_start >= 0:
+        # 対応する閉じ括弧を探す
+        depth = 0
+        for i in range(brace_start, len(text)):
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    return text[brace_start:i + 1]
+
+    raise ValueError(f"JSONが見つかりません。APIの応答形式が不正です: {text[:300]}")
 
 
 def _sanitize_dict(d: dict, float_keys: list[str] = None, int_keys: list[str] = None,
@@ -298,65 +370,159 @@ def _sanitize_dict(d: dict, float_keys: list[str] = None, int_keys: list[str] = 
     return d
 
 
+def _safe_float(val) -> float:
+    """値をfloatに安全変換"""
+    if val is None:
+        return 0.0
+    try:
+        if isinstance(val, str):
+            # "660W" -> 660, "190.08kW" -> 190.08 のような文字列を処理
+            cleaned = re.sub(r"[^\d.\-]", "", val)
+            return float(cleaned) if cleaned else 0.0
+        return float(val)
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _safe_int(val) -> int:
+    """値をintに安全変換"""
+    if val is None:
+        return 0
+    try:
+        if isinstance(val, str):
+            cleaned = re.sub(r"[^\d\-]", "", val)
+            return int(cleaned) if cleaned else 0
+        return int(val)
+    except (ValueError, TypeError):
+        return 0
+
+
+def _safe_bool(val) -> bool:
+    """値をboolに安全変換"""
+    if val is None:
+        return False
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.strip().lower() in ("true", "1", "yes", "あり", "有", "○")
+    return bool(val)
+
+
 def _parse_raw_data(raw: dict) -> SurveyData:
-    """生データをSurveyDataモデルに変換"""
-    # null値のサニタイズ
-    proj_raw = raw.get("project", {})
+    """生データをSurveyDataモデルに変換（堅牢なエラーハンドリング付き）"""
+    warnings = list(raw.get("extraction_warnings", []) or [])
+
+    # --- project ---
+    proj_raw = raw.get("project", {}) or {}
     _sanitize_dict(proj_raw, str_keys=[
         "project_name", "address", "postal_code", "survey_date", "weather", "surveyor"])
-    project = ProjectInfo(**proj_raw)
+    try:
+        project = ProjectInfo(**proj_raw)
+    except Exception as e:
+        logger.warning(f"ProjectInfo変換エラー: {e}")
+        project = ProjectInfo()
+        warnings.append(f"案件情報の一部を読み取れませんでした: {e}")
 
-    # equipment
-    eq_raw = raw.get("equipment", {})
-    _sanitize_dict(eq_raw,
-                   str_keys=["module_maker", "module_model"],
-                   float_keys=["module_output_w", "pv_capacity_kw"],
-                   int_keys=["planned_panels"])
+    # --- equipment ---
+    eq_raw = raw.get("equipment", {}) or {}
+    _sanitize_dict(eq_raw, str_keys=["module_maker", "module_model"])
+    # 数値フィールドは安全変換
+    eq_raw["module_output_w"] = _safe_float(eq_raw.get("module_output_w"))
+    eq_raw["pv_capacity_kw"] = _safe_float(eq_raw.get("pv_capacity_kw"))
+    eq_raw["planned_panels"] = _safe_int(eq_raw.get("planned_panels"))
     design_status_map = {"確定": DesignStatus.CONFIRMED, "仮": DesignStatus.TENTATIVE, "未定": DesignStatus.UNDECIDED}
     if "design_status" in eq_raw:
-        eq_raw["design_status"] = design_status_map.get(eq_raw["design_status"], DesignStatus.UNDECIDED)
-    equipment = PlannedEquipment(**eq_raw)
+        eq_raw["design_status"] = design_status_map.get(eq_raw.get("design_status"), DesignStatus.UNDECIDED)
+    try:
+        equipment = PlannedEquipment(**eq_raw)
+    except Exception as e:
+        logger.warning(f"PlannedEquipment変換エラー: {e}")
+        equipment = PlannedEquipment()
+        warnings.append(f"設備情報の一部を読み取れませんでした: {e}")
 
-    # high_voltage
-    hv_raw = raw.get("high_voltage", {})
-    _sanitize_dict(hv_raw,
-                   bool_keys=["building_drawing", "single_line_diagram", "vt_available",
-                              "ct_available", "relay_space", "pcs_space", "pre_use_self_check"],
-                   float_keys=["separation_ns_mm", "separation_ew_mm"],
-                   str_keys=["single_line_diagram_note", "c_installation_note",
-                             "bt_backup_capacity", "tr_capacity"])
+    # --- high_voltage ---
+    hv_raw = raw.get("high_voltage", {}) or {}
+    # bool値を安全変換
+    for bk in ["building_drawing", "single_line_diagram", "vt_available",
+                "ct_available", "relay_space", "pcs_space", "pre_use_self_check"]:
+        if bk in hv_raw:
+            hv_raw[bk] = _safe_bool(hv_raw[bk])
+    # float値を安全変換
+    for fk in ["separation_ns_mm", "separation_ew_mm"]:
+        if fk in hv_raw:
+            hv_raw[fk] = _safe_float(hv_raw[fk])
+    _sanitize_dict(hv_raw, str_keys=["single_line_diagram_note", "c_installation_note",
+                                      "bt_backup_capacity", "tr_capacity"])
     if "ground_type" in hv_raw and hv_raw["ground_type"]:
         gt_map = {"A": GroundType.A, "C": GroundType.C, "D": GroundType.D}
-        hv_raw["ground_type"] = gt_map.get(hv_raw["ground_type"], GroundType.A)
+        mapped = gt_map.get(str(hv_raw["ground_type"]).strip().upper())
+        if mapped:
+            hv_raw["ground_type"] = mapped
+        else:
+            del hv_raw["ground_type"]
     elif "ground_type" in hv_raw:
         del hv_raw["ground_type"]  # null/空の場合はデフォルトに任せる
     if "c_installation" in hv_raw and hv_raw["c_installation"]:
         ci_map = {"可": CInstallation.POSSIBLE, "不可": CInstallation.IMPOSSIBLE}
-        hv_raw["c_installation"] = ci_map.get(hv_raw["c_installation"], CInstallation.POSSIBLE)
+        mapped = ci_map.get(hv_raw["c_installation"])
+        if mapped:
+            hv_raw["c_installation"] = mapped
+        else:
+            del hv_raw["c_installation"]
     elif "c_installation" in hv_raw:
         del hv_raw["c_installation"]
     if "pcs_location" in hv_raw and hv_raw["pcs_location"]:
         loc_map = {"屋内": LocationType.INDOOR, "屋外": LocationType.OUTDOOR}
         hv_raw["pcs_location"] = loc_map.get(hv_raw["pcs_location"])
+    elif "pcs_location" in hv_raw:
+        hv_raw["pcs_location"] = None
     if "bt_space" in hv_raw and hv_raw["bt_space"]:
         bt_map = {"屋内": BTPlacement.INDOOR, "屋外": BTPlacement.OUTDOOR, "設置なし": BTPlacement.NONE}
         hv_raw["bt_space"] = bt_map.get(hv_raw["bt_space"])
-    high_voltage = HighVoltageChecklist(**hv_raw)
+    elif "bt_space" in hv_raw:
+        hv_raw["bt_space"] = None
+    try:
+        high_voltage = HighVoltageChecklist(**hv_raw)
+    except Exception as e:
+        logger.warning(f"HighVoltageChecklist変換エラー: {e}")
+        high_voltage = HighVoltageChecklist()
+        warnings.append(f"高圧チェック項目の一部を読み取れませんでした: {e}")
 
-    # supplementary
-    supplementary = SupplementarySheet(**raw.get("supplementary", {}))
+    # --- supplementary ---
+    sup_raw = raw.get("supplementary", {}) or {}
+    _sanitize_dict(sup_raw,
+                   str_keys=["scaffold_location", "pole_number", "pole_type",
+                             "wiring_route", "bt_location", "meter_photo", "handwritten_notes"],
+                   bool_keys=["crane_available", "scaffold_needed", "cubicle_location"])
+    # bool値を安全変換
+    for bk in ["crane_available", "scaffold_needed", "cubicle_location"]:
+        if bk in sup_raw:
+            sup_raw[bk] = _safe_bool(sup_raw[bk])
+    try:
+        supplementary = SupplementarySheet(**sup_raw)
+    except Exception as e:
+        logger.warning(f"SupplementarySheet変換エラー: {e}")
+        supplementary = SupplementarySheet()
+        warnings.append(f"補足情報の一部を読み取れませんでした: {e}")
 
-    # confirmation
-    confirmation = FinalConfirmation(**raw.get("confirmation", {}))
+    # --- confirmation ---
+    conf_raw = raw.get("confirmation", {}) or {}
+    _sanitize_dict(conf_raw,
+                   str_keys=["surveyor_name", "surveyor_date", "design_reviewer",
+                             "design_review_date", "works_reviewer", "works_review_date", "notes"])
+    try:
+        confirmation = FinalConfirmation(**conf_raw)
+    except Exception as e:
+        logger.warning(f"FinalConfirmation変換エラー: {e}")
+        confirmation = FinalConfirmation()
+        warnings.append(f"確認情報の一部を読み取れませんでした: {e}")
 
-    # confidences
-    confidences_raw = raw.get("field_confidences", {})
+    # --- confidences ---
+    confidences_raw = raw.get("field_confidences", {}) or {}
     confidences = {}
+    conf_map = {"high": ConfidenceLevel.HIGH, "medium": ConfidenceLevel.MEDIUM, "low": ConfidenceLevel.LOW}
     for k, v in confidences_raw.items():
-        conf_map = {"high": ConfidenceLevel.HIGH, "medium": ConfidenceLevel.MEDIUM, "low": ConfidenceLevel.LOW}
         confidences[k] = conf_map.get(v, ConfidenceLevel.HIGH)
-
-    warnings = raw.get("extraction_warnings", [])
 
     return SurveyData(
         project=project,

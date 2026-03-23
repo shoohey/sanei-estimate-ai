@@ -702,7 +702,8 @@ def _render_step1_pdf_upload():
             st.session_state.pdf_images = all_images
             st.session_state.tmp_pdf_paths = tmp_paths
         except Exception as e:
-            st.error(f"PDFの読み取りに失敗しました: {e}")
+            st.error(f"⚠️ PDFの画像変換に失敗しました: {e}")
+            st.info("💡 PDFファイルが破損していないか、パスワード保護されていないか確認してください。")
             return
 
         st.divider()
@@ -713,17 +714,25 @@ def _render_step1_pdf_upload():
                 st.rerun()
         with col_read:
             file_count = len(uploaded_files)
-            label = f"🔍 AI読み取り開始（{file_count}件の書類を解析）"
+            total_pages = len(all_images)
+            label = f"🔍 AI読み取り開始（{file_count}件 / {total_pages}ページを解析）"
             if st.button(label, type="primary", use_container_width=True):
-                with st.spinner("Claude AI で書類を読み取り中...（20〜40秒）"):
-                    try:
-                        survey = extract_survey_data_multi(tmp_paths)
-                        st.session_state.survey_data = survey
-                        st.session_state.step = 2
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"読み取りに失敗しました: {e}")
-                        st.exception(e)
+                progress_bar = st.progress(0, text="準備中...")
+                try:
+                    progress_bar.progress(10, text="PDFを解析中...（自動リトライ機能付き）")
+                    survey = extract_survey_data_multi(tmp_paths)
+                    progress_bar.progress(100, text="読み取り完了！")
+                    st.session_state.survey_data = survey
+                    st.session_state.step = 2
+                    st.rerun()
+                except RuntimeError as e:
+                    st.error(f"⚠️ {e}")
+                    st.info("💡 **対処法**: PDFファイルが正常に開けるか確認し、再度お試しください。"
+                            "問題が続く場合は、PDFを1ファイルずつアップロードしてみてください。")
+                except Exception as e:
+                    st.error(f"⚠️ 予期しないエラーが発生しました: {e}")
+                    st.info("💡 しばらく待ってから再度お試しください。")
+                    st.exception(e)
     else:
         if st.button("← 入力方法に戻る"):
             st.session_state.step = 0

@@ -1,8 +1,11 @@
 """PDF→画像変換（PyMuPDF）"""
 import base64
 import io
+import logging
 import fitz  # PyMuPDF
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 # Claude API の画像サイズ上限（base64エンコード前）
 MAX_IMAGE_BYTES = 4_500_000  # 4.5MB（5MB上限に余裕を持たせる）
@@ -21,21 +24,42 @@ def pdf_to_images(pdf_path: str, dpi: int = 200) -> list[dict]:
         list of {"page": int, "image_base64": str, "image_bytes": bytes,
                  "media_type": str}
     """
-    doc = fitz.open(pdf_path)
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception as e:
+        raise RuntimeError(f"PDFファイルを開けません（ファイル破損またはパスワード保護の可能性）: {e}") from e
+
+    if len(doc) == 0:
+        doc.close()
+        raise RuntimeError("PDFにページがありません。空のPDFファイルです。")
+
     pages = []
 
     for page_num in range(len(doc)):
         page = doc[page_num]
-        zoom = dpi / 72
-        mat = fitz.Matrix(zoom, zoom)
-        pix = page.get_pixmap(matrix=mat)
-        img_bytes = pix.tobytes("png")
+
+        # まずデフォルトDPIで試行、失敗したらDPIを下げてリトライ
+        img_bytes = None
+        media_type = "image/png"
+
+        for try_dpi in [dpi, 150, 100]:
+            try:
+                zoom = try_dpi / 72
+                mat = fitz.Matrix(zoom, zoom)
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                img_bytes = pix.tobytes("png")
+                break
+            except Exception as e:
+                logger.warning(f"ページ{page_num + 1}のレンダリングエラー（DPI={try_dpi}）: {e}")
+                continue
+
+        if img_bytes is None:
+            logger.error(f"ページ{page_num + 1}のレンダリングに完全に失敗しました。スキップします。")
+            continue
 
         # サイズチェック：大きすぎる場合はJPEG圧縮
         if len(img_bytes) > MAX_IMAGE_BYTES:
             img_bytes, media_type = _compress_image(pix, MAX_IMAGE_BYTES)
-        else:
-            media_type = "image/png"
 
         img_base64 = base64.standard_b64encode(img_bytes).decode("utf-8")
 
