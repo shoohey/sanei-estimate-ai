@@ -89,3 +89,49 @@ BtoB業務改善の営業資料・デモ画面の共通トンマナ。参考: ht
    フェーズ2（2並列）: [D]テスト・CI/CD + [E]セキュリティ・監視
    フェーズ3（順次）: 全テスト→動線テスト→本番デプロイ→品質保証レポート
 5. **品質保証（必須）**: 全チェック全パスしてから納品。
+
+## URL発行コマンド
+ユーザーの発言に「URL発行」という単語が含まれていたら、以下のシェルスクリプトを実行してURLを発行してください:
+- 永続公開: `bash /Users/takaishouhei/claude-dashboard/bin/deploy-demo.sh`
+- 期間限定（例: 7日間）: `bash /Users/takaishouhei/claude-dashboard/bin/deploy-demo.sh --expires 7`
+
+「URL発行」を含むあらゆる表現（「URL発行して」「URL発行お願い」等）に反応してください。
+ユーザーが「〇日限定」と言った場合は --expires オプションを使ってください。
+実行後、表示されたURLをユーザーに伝えてください。
+
+## 資料作成＋URL発行（ワンステップ）
+以下のトリガーワードが発言に含まれていたら、資料を作成した上でURL発行も自動で行ってください:
+
+| トリガーワード | 動作 |
+|---|---|
+| 「営業資料URL発行」 | 営業資料（sales-proposal.html）を作成 → `bash /Users/takaishouhei/claude-dashboard/bin/deploy-demo.sh` でURL発行 |
+| 「提案資料URL発行」 | 提案資料（proposal.html）を作成 → `bash /Users/takaishouhei/claude-dashboard/bin/deploy-demo.sh` でURL発行 |
+| 「説明資料URL発行」 | 説明資料（explanation.html）を作成 → `bash /Users/takaishouhei/claude-dashboard/bin/deploy-demo.sh` でURL発行 |
+| 「デモURL発行」 | デモ画面（demo.html）を作成 → `bash /Users/takaishouhei/claude-dashboard/bin/deploy-demo.sh` でURL発行 |
+
+資料作成時のルール:
+- 上記「トンマナ」セクションのデザインに厳密に従う
+- 1ファイルのHTMLで完結（CSS・JS埋め込み）
+- 営業資料・提案資料・説明資料はA4横サイズ（297mm × 210mm）でスライド形式、@media printでA4横印刷対応
+- デモ画面は白背景・インタラクティブなUI
+- ファイルをプロジェクトディレクトリに保存してからデプロイスクリプトを実行
+
+## 本格開発コマンド
+ユーザーの発言に「本格開発」が含まれていたら、以下のフローを実行:
+
+1. **ヒアリング（必須）**: 以下を選択肢付きで確認
+   - 認証方式（不要/メール/Google SSO/マジックリンク/両対応）
+   - DB（Supabase推奨/Railway/Neon/Xserver VPS/SQLite）
+   - 権限階層（不要/2段階/3段階/マルチテナント階層型）
+     マルチテナントの場合: スーパー管理者→顧客本部→施設長→スタッフ→営業代理店から選択
+   - 決済（不要/Stripe決済/サブスク課金/口座振替・手動管理/後で追加）
+   - LP・登録動線（不要/LP+セルフ登録/LP+資料請求→招待/両方/ログイン画面のみ）
+   - 想定ユーザー数、通知機能、その他の要件
+2. **技術構成を提案**: 構成・権限テーブル・動線設計・セキュリティ設計を提案し承認を得る
+3. **外部サービスセットアップ**: 承認後、構築前に必要なサービス（Supabase/Stripe/Resend/Google OAuth等）を1つずつ案内。URL・手順・取得すべきキーを明示。キーは.env.localに保存。接続テストまで実施。
+4. **構築（エージェント並列実行）**:
+   フェーズ0（順次）: 初期化→DB(Prisma)→RLS→認証基盤→マルチテナント基盤
+   フェーズ1（3並列）: [A]フロントエンド + [B]バックエンド + [C]運用機能
+   フェーズ2（2並列）: [D]テスト・CI/CD + [E]セキュリティ・監視
+   フェーズ3（順次）: 全テスト→動線テスト→本番デプロイ→品質保証レポート
+5. **品質保証（必須）**: 全チェック全パスしてから納品。

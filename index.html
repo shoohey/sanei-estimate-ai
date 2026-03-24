@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>営業リスト生成AI</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Noto Sans JP', sans-serif;
+  background: #f5f7fa;
+  color: #1a1a2e;
+  line-height: 1.7;
+  min-height: 100vh;
+}
+
+/* ── ヘッダー ── */
+.header {
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
+  padding: 1.2rem 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.header-left { display: flex; align-items: center; gap: 0.8rem; }
+.header-icon {
+  width: 40px; height: 40px;
+  background: #1e3a5f;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.3rem;
+}
+.header h1 {
+  font-family: 'Inter', sans-serif;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #1e3a5f;
+}
+.header-badge {
+  background: #edf2f7;
+  color: #4a5568;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.75rem;
+  border-radius: 20px;
+  font-weight: 500;
+}
+
+/* ── レイアウト ── */
+.container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 2rem;
+}
+@media (max-width: 1024px) {
+  .grid { grid-template-columns: 1fr; }
+}
+
+/* ── カード ── */
+.card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+  padding: 1.8rem;
+}
+.card-title {
+  font-family: 'Inter', sans-serif;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #1e3a5f;
+  margin-bottom: 1.2rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* ── フォーム ── */
+label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: #4a5568;
+  margin-bottom: 0.4rem;
+  margin-top: 1rem;
+}
+label:first-child { margin-top: 0; }
+input[type="text"], input[type="password"], textarea, select {
+  width: 100%;
+  padding: 0.7rem 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-family: 'Noto Sans JP', sans-serif;
+  transition: border-color 0.2s;
+  background: #fff;
+}
+input:focus, textarea:focus, select:focus {
+  outline: none;
+  border-color: #1e3a5f;
+  box-shadow: 0 0 0 3px rgba(30,58,95,0.08);
+}
+textarea { resize: vertical; min-height: 140px; }
+
+.input-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+/* ── チェックボックスグループ ── */
+.checkbox-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.3rem;
+}
+.checkbox-group label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  margin: 0;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  background: #fff;
+}
+.checkbox-group label:hover { border-color: #1e3a5f; }
+.checkbox-group input:checked + span {
+  color: #1e3a5f;
+  font-weight: 600;
+}
+.checkbox-group label:has(input:checked) {
+  border-color: #1e3a5f;
+  background: rgba(30,58,95,0.05);
+}
+.checkbox-group input { display: none; }
+
+/* ── スライダー ── */
+.slider-container {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+input[type="range"] {
+  flex: 1;
+  accent-color: #1e3a5f;
+  height: 6px;
+}
+.slider-value {
+  font-family: 'Inter', sans-serif;
+  font-weight: 700;
+  font-size: 1.2rem;
+  color: #1e3a5f;
+  min-width: 40px;
+  text-align: center;
+}
+
+/* ── ボタン ── */
+.btn-primary {
+  width: 100%;
+  padding: 1rem;
+  background: #1e3a5f;
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-family: 'Noto Sans JP', sans-serif;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-top: 1.5rem;
+}
+.btn-primary:hover { background: #15304f; transform: translateY(-1px); }
+.btn-primary:disabled {
+  background: #a0aec0;
+  cursor: not-allowed;
+  transform: none;
+}
+.btn-primary.loading {
+  background: #2d4a6f;
+  position: relative;
+  pointer-events: none;
+}
+.btn-primary.loading::after {
+  content: '';
+  width: 20px; height: 20px;
+  border: 3px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.btn-secondary {
+  padding: 0.6rem 1.2rem;
+  background: #fff;
+  color: #1e3a5f;
+  border: 1px solid #1e3a5f;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: 'Noto Sans JP', sans-serif;
+}
+.btn-secondary:hover { background: rgba(30,58,95,0.05); }
+
+/* ── 結果セクション ── */
+.results-section { margin-top: 2rem; }
+.metrics-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+@media (max-width: 768px) {
+  .metrics-row { grid-template-columns: repeat(2, 1fr); }
+}
+.metric-card {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 1.2rem;
+  text-align: center;
+}
+.metric-value {
+  font-family: 'Inter', sans-serif;
+  font-size: 2rem;
+  font-weight: 800;
+  color: #1e3a5f;
+}
+.metric-label {
+  font-size: 0.8rem;
+  color: #4a5568;
+  margin-top: 0.2rem;
+}
+
+/* ── テーブル ── */
+.table-wrapper {
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+thead {
+  background: #1e3a5f;
+  color: #fff;
+  position: sticky;
+  top: 0;
+}
+th {
+  padding: 0.8rem 1rem;
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+  font-size: 0.82rem;
+}
+td {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid #f0f2f5;
+  vertical-align: top;
+}
+tr:hover { background: #f8fafc; }
+.priority-a {
+  display: inline-block;
+  background: #c53030;
+  color: #fff;
+  padding: 0.15rem 0.6rem;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+.priority-b {
+  display: inline-block;
+  background: #975a16;
+  color: #fff;
+  padding: 0.15rem 0.6rem;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+.priority-c {
+  display: inline-block;
+  background: #276749;
+  color: #fff;
+  padding: 0.15rem 0.6rem;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+
+/* ── ダウンロードボタン ── */
+.download-row {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1.2rem;
+  margin-bottom: 1.5rem;
+}
+
+/* ── ローディング ── */
+.loading-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(255,255,255,0.85);
+  z-index: 200;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  gap: 1rem;
+}
+.loading-overlay.active { display: flex; }
+.loading-spinner {
+  width: 50px; height: 50px;
+  border: 5px solid #e2e8f0;
+  border-top-color: #1e3a5f;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.loading-text {
+  font-size: 1.1rem;
+  color: #1e3a5f;
+  font-weight: 500;
+}
+.loading-sub {
+  font-size: 0.85rem;
+  color: #4a5568;
+}
+
+/* ── 入力方法タブ ── */
+.tab-row {
+  display: flex;
+  gap: 0;
+  margin-bottom: 1.2rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.tab-btn {
+  flex: 1;
+  padding: 0.6rem;
+  border: none;
+  background: #fff;
+  font-size: 0.88rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: 'Noto Sans JP', sans-serif;
+  color: #4a5568;
+}
+.tab-btn.active {
+  background: #1e3a5f;
+  color: #fff;
+}
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* ── ファイルアップロード ── */
+.file-drop {
+  border: 2px dashed #cbd5e0;
+  border-radius: 10px;
+  padding: 2.5rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: #fafbfc;
+}
+.file-drop:hover, .file-drop.dragover {
+  border-color: #1e3a5f;
+  background: rgba(30,58,95,0.03);
+}
+.file-drop-icon { font-size: 2.5rem; margin-bottom: 0.5rem; }
+.file-drop-text { font-size: 0.9rem; color: #4a5568; }
+.file-drop-hint { font-size: 0.78rem; color: #a0aec0; margin-top: 0.3rem; }
+.file-name {
+  margin-top: 0.8rem;
+  padding: 0.5rem 1rem;
+  background: #edf2f7;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  display: none;
+}
+
+/* ── エラー ── */
+.error-msg {
+  background: #fff5f5;
+  border: 1px solid #feb2b2;
+  color: #c53030;
+  padding: 1rem;
+  border-radius: 8px;
+  margin-top: 1rem;
+  font-size: 0.9rem;
+  display: none;
+}
+
+/* ── チャート ── */
+.chart-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+}
+@media (max-width: 768px) {
+  .chart-row { grid-template-columns: 1fr; }
+}
+.chart-card { padding: 1.5rem; }
+.chart-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-bottom: 0.5rem;
+}
+.chart-bar-label {
+  font-size: 0.82rem;
+  min-width: 120px;
+  text-align: right;
+  color: #4a5568;
+}
+.chart-bar-track {
+  flex: 1;
+  height: 24px;
+  background: #edf2f7;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.chart-bar-fill {
+  height: 100%;
+  background: #1e3a5f;
+  border-radius: 4px;
+  transition: width 0.6s ease;
+  display: flex;
+  align-items: center;
+  padding-left: 0.5rem;
+}
+.chart-bar-count {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: #fff;
+}
+</style>
+</head>
+<body>
+
+<!-- ヘッダー -->
+<div class="header">
+  <div class="header-left">
+    <div class="header-icon">📋</div>
+    <h1>営業リスト生成AI</h1>
+  </div>
+  <span class="header-badge">Powered by Claude AI</span>
+</div>
+
+<!-- ローディング -->
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">AIが最適な営業先を分析中...</div>
+  <div class="loading-sub">商品特性とマッチ度の高い企業を選定しています</div>
+</div>
+
+<div class="container">
+  <div class="grid">
+
+    <!-- 左: 商品情報入力 -->
+    <div>
+      <div class="card">
+        <div class="card-title">🏷️ 商品・サービス情報</div>
+
+        <div class="tab-row">
+          <button class="tab-btn active" onclick="switchTab('text')">テキスト入力</button>
+          <button class="tab-btn" onclick="switchTab('file')">ファイルアップロード</button>
+        </div>
+
+        <!-- テキスト入力 -->
+        <div class="tab-content active" id="tab-text">
+          <label>商品・サービス名</label>
+          <input type="text" id="productName" placeholder="例: 産業用太陽光発電システム">
+
+          <label>カテゴリ</label>
+          <input type="text" id="productCategory" placeholder="例: 再生可能エネルギー / 電力設備">
+
+          <label>商品・サービスの説明</label>
+          <textarea id="productDescription" placeholder="例:&#10;産業用太陽光発電の設計・施工・保守を一括提供するサービスです。&#10;&#10;【特徴】&#10;・自家消費型 / PPA型 / FIT型に対応&#10;・年間電気代20〜40%削減&#10;・補助金申請代行サポート付き&#10;&#10;【対象】&#10;・工場、倉庫、商業施設の屋根&#10;・遊休地の地上設置"></textarea>
+
+          <div class="input-row">
+            <div>
+              <label>価格帯</label>
+              <input type="text" id="priceRange" placeholder="例: 500万〜5,000万円">
+            </div>
+            <div>
+              <label>対象エリア</label>
+              <input type="text" id="targetArea" placeholder="例: 全国 / 東海地方">
+            </div>
+          </div>
+        </div>
+
+        <!-- ファイルアップロード -->
+        <div class="tab-content" id="tab-file">
+          <div class="file-drop" id="fileDrop" onclick="document.getElementById('fileInput').click()">
+            <div class="file-drop-icon">📄</div>
+            <div class="file-drop-text">クリックまたはドラッグ＆ドロップ</div>
+            <div class="file-drop-hint">対応形式: TXT, CSV, JSON</div>
+          </div>
+          <input type="file" id="fileInput" accept=".txt,.csv,.json" style="display:none">
+          <div class="file-name" id="fileName"></div>
+          <textarea id="fileContent" style="display:none; margin-top:1rem;" disabled></textarea>
+        </div>
+      </div>
+
+      <div class="error-msg" id="errorMsg"></div>
+
+      <button class="btn-primary" id="generateBtn" onclick="generate()">
+        🚀 営業リストを生成
+      </button>
+    </div>
+
+    <!-- 右: 生成条件 -->
+    <div>
+      <div class="card">
+        <div class="card-title">🎯 生成条件</div>
+
+        <label>APIキー</label>
+        <input type="password" id="apiKey" placeholder="sk-ant-...">
+
+        <label>生成する営業先の数</label>
+        <div class="slider-container">
+          <input type="range" id="numLeads" min="5" max="50" step="5" value="20"
+            oninput="document.getElementById('numLeadsVal').textContent=this.value">
+          <span class="slider-value" id="numLeadsVal">20</span>
+          <span style="font-size:0.8rem;color:#4a5568;">件</span>
+        </div>
+
+        <label>情報の詳細度</label>
+        <select id="detailLevel">
+          <option value="simple">簡易（会社名・業種・理由）</option>
+          <option value="standard">標準（＋担当部署・アプローチ方法）</option>
+          <option value="detailed" selected>詳細（＋想定課題・提案ポイント・優先度）</option>
+        </select>
+
+        <label>業種フィルター（任意）</label>
+        <div class="checkbox-group" id="industryFilter">
+          <label><input type="checkbox" value="農業・林業・水産業"><span>農業・林業・水産業</span></label>
+          <label><input type="checkbox" value="製造業"><span>製造業</span></label>
+          <label><input type="checkbox" value="建設・不動産"><span>建設・不動産</span></label>
+          <label><input type="checkbox" value="IT・通信"><span>IT・通信</span></label>
+          <label><input type="checkbox" value="小売・流通"><span>小売・流通</span></label>
+          <label><input type="checkbox" value="飲食・食品"><span>飲食・食品</span></label>
+          <label><input type="checkbox" value="医療・ヘルスケア"><span>医療・ヘルスケア</span></label>
+          <label><input type="checkbox" value="教育"><span>教育</span></label>
+          <label><input type="checkbox" value="金融・保険"><span>金融・保険</span></label>
+          <label><input type="checkbox" value="物流・運輸"><span>物流・運輸</span></label>
+          <label><input type="checkbox" value="エネルギー・環境"><span>エネルギー・環境</span></label>
+          <label><input type="checkbox" value="自治体・官公庁"><span>自治体・官公庁</span></label>
+        </div>
+
+        <label>企業規模フィルター（任意）</label>
+        <div class="checkbox-group" id="companySizeFilter">
+          <label><input type="checkbox" value="大企業（1000人以上）"><span>大企業</span></label>
+          <label><input type="checkbox" value="中堅企業（300〜999人）"><span>中堅企業</span></label>
+          <label><input type="checkbox" value="中小企業（50〜299人）"><span>中小企業</span></label>
+          <label><input type="checkbox" value="小規模企業（50人未満）"><span>小規模</span></label>
+        </div>
+
+        <label>追加の要望（任意）</label>
+        <textarea id="additionalRequest" style="min-height:80px;" placeholder="例: 東海エリアの企業を多めに、脱炭素に積極的な企業を優先"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- 結果 -->
+  <div class="results-section" id="resultsSection" style="display:none;">
+    <h2 style="font-family:'Inter',sans-serif;font-size:1.3rem;color:#1e3a5f;margin-bottom:1.2rem;">📊 生成結果</h2>
+
+    <div class="metrics-row" id="metricsRow"></div>
+
+    <div class="download-row">
+      <button class="btn-secondary" onclick="downloadCSV()">📥 CSVダウンロード</button>
+      <button class="btn-secondary" onclick="downloadJSON()">📥 JSONダウンロード</button>
+    </div>
+
+    <div class="table-wrapper">
+      <table id="resultsTable">
+        <thead id="tableHead"></thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+
+    <div class="chart-row" id="chartRow"></div>
+  </div>
+</div>
+
+<script>
+let currentLeads = [];
+let fileContentData = '';
+
+// タブ切り替え
+function switchTab(tab) {
+  document.querySelectorAll('.tab-btn').forEach((b, i) => {
+    b.classList.toggle('active', (tab === 'text' && i === 0) || (tab === 'file' && i === 1));
+  });
+  document.getElementById('tab-text').classList.toggle('active', tab === 'text');
+  document.getElementById('tab-file').classList.toggle('active', tab === 'file');
+}
+
+// ファイルアップロード
+const fileDrop = document.getElementById('fileDrop');
+const fileInput = document.getElementById('fileInput');
+
+fileDrop.addEventListener('dragover', e => { e.preventDefault(); fileDrop.classList.add('dragover'); });
+fileDrop.addEventListener('dragleave', () => fileDrop.classList.remove('dragover'));
+fileDrop.addEventListener('drop', e => {
+  e.preventDefault();
+  fileDrop.classList.remove('dragover');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) handleFile(fileInput.files[0]);
+});
+
+function handleFile(file) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    fileContentData = e.target.result;
+    document.getElementById('fileName').style.display = 'block';
+    document.getElementById('fileName').textContent = '📎 ' + file.name;
+    const ta = document.getElementById('fileContent');
+    ta.style.display = 'block';
+    ta.value = fileContentData.substring(0, 2000);
+  };
+  reader.readAsText(file);
+}
+
+// 商品情報をまとめる
+function getProductInfo() {
+  if (document.getElementById('tab-file').classList.contains('active') && fileContentData) {
+    return fileContentData;
+  }
+  const name = document.getElementById('productName').value;
+  const cat = document.getElementById('productCategory').value;
+  const desc = document.getElementById('productDescription').value;
+  const price = document.getElementById('priceRange').value;
+  const area = document.getElementById('targetArea').value;
+  if (!name && !desc) return '';
+  return `商品・サービス名: ${name}\nカテゴリ: ${cat}\n説明: ${desc}\n価格帯: ${price}\n対象エリア: ${area}`;
+}
+
+// チェックボックスの値を取得
+function getCheckedValues(containerId) {
+  return [...document.querySelectorAll(`#${containerId} input:checked`)].map(c => c.value);
+}
+
+// 生成
+async function generate() {
+  const apiKey = document.getElementById('apiKey').value.trim();
+  const productInfo = getProductInfo();
+  const errEl = document.getElementById('errorMsg');
+  errEl.style.display = 'none';
+
+  if (!apiKey) { errEl.textContent = 'APIキーを入力してください。'; errEl.style.display = 'block'; return; }
+  if (!productInfo) { errEl.textContent = '商品・サービス情報を入力してください。'; errEl.style.display = 'block'; return; }
+
+  const btn = document.getElementById('generateBtn');
+  btn.classList.add('loading');
+  btn.textContent = '分析中...';
+  btn.disabled = true;
+  document.getElementById('loadingOverlay').classList.add('active');
+
+  try {
+    const res = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: apiKey,
+        product_info: productInfo,
+        num_leads: parseInt(document.getElementById('numLeads').value),
+        detail_level: document.getElementById('detailLevel').value,
+        industry_filter: getCheckedValues('industryFilter'),
+        company_size: getCheckedValues('companySizeFilter'),
+        additional_request: document.getElementById('additionalRequest').value,
+      }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    currentLeads = data.leads;
+    renderResults(data.leads);
+  } catch (e) {
+    errEl.textContent = 'エラー: ' + e.message;
+    errEl.style.display = 'block';
+  } finally {
+    btn.classList.remove('loading');
+    btn.textContent = '🚀 営業リストを生成';
+    btn.disabled = false;
+    document.getElementById('loadingOverlay').classList.remove('active');
+  }
+}
+
+// カラム名マッピング
+const COL_MAP = {
+  company_name: '会社名', industry: '業種', company_size: '企業規模',
+  department: '担当部署', key_person_title: 'キーパーソン', challenge: '想定課題',
+  proposal_point: '提案ポイント', approach: 'アプローチ', priority: '優先度', reason: '選定理由',
+};
+
+// 結果レンダリング
+function renderResults(leads) {
+  if (!leads || !leads.length) return;
+  document.getElementById('resultsSection').style.display = 'block';
+
+  // メトリクス
+  const industries = [...new Set(leads.map(l => l.industry))];
+  const priorityA = leads.filter(l => l.priority === 'A').length;
+  const approaches = [...new Set(leads.map(l => l.approach).filter(Boolean))];
+  document.getElementById('metricsRow').innerHTML = `
+    <div class="metric-card"><div class="metric-value">${leads.length}</div><div class="metric-label">営業先件数</div></div>
+    <div class="metric-card"><div class="metric-value">${industries.length}</div><div class="metric-label">業種数</div></div>
+    <div class="metric-card"><div class="metric-value">${priorityA || '-'}</div><div class="metric-label">最優先 (A)</div></div>
+    <div class="metric-card"><div class="metric-value">${approaches.length || '-'}</div><div class="metric-label">アプローチ種別</div></div>
+  `;
+
+  // テーブル
+  const keys = Object.keys(leads[0]);
+  const thead = document.getElementById('tableHead');
+  const tbody = document.getElementById('tableBody');
+  thead.innerHTML = '<tr>' + keys.map(k => `<th>${COL_MAP[k] || k}</th>`).join('') + '</tr>';
+  tbody.innerHTML = leads.map(row =>
+    '<tr>' + keys.map(k => {
+      let val = row[k] || '';
+      if (k === 'priority') {
+        const cls = val === 'A' ? 'priority-a' : val === 'B' ? 'priority-b' : 'priority-c';
+        val = `<span class="${cls}">${val}</span>`;
+      }
+      return `<td>${val}</td>`;
+    }).join('') + '</tr>'
+  ).join('');
+
+  // チャート
+  const chartRow = document.getElementById('chartRow');
+  let chartsHtml = '';
+
+  // 業種別
+  const indCount = {};
+  leads.forEach(l => { indCount[l.industry] = (indCount[l.industry] || 0) + 1; });
+  const maxInd = Math.max(...Object.values(indCount));
+  chartsHtml += `<div class="card chart-card"><div class="card-title">📈 業種別の内訳</div>`;
+  Object.entries(indCount).sort((a,b) => b[1]-a[1]).forEach(([k,v]) => {
+    const pct = (v / maxInd * 100);
+    chartsHtml += `<div class="chart-bar-row">
+      <span class="chart-bar-label">${k}</span>
+      <div class="chart-bar-track"><div class="chart-bar-fill" style="width:${pct}%"><span class="chart-bar-count">${v}</span></div></div>
+    </div>`;
+  });
+  chartsHtml += '</div>';
+
+  // 優先度別
+  if (leads[0].priority) {
+    const priCount = { A: 0, B: 0, C: 0 };
+    leads.forEach(l => { if (priCount[l.priority] !== undefined) priCount[l.priority]++; });
+    const maxPri = Math.max(...Object.values(priCount), 1);
+    const priColors = { A: '#c53030', B: '#975a16', C: '#276749' };
+    const priLabels = { A: 'A: 最優先', B: 'B: 高', C: 'C: 中' };
+    chartsHtml += `<div class="card chart-card"><div class="card-title">🎯 優先度別の内訳</div>`;
+    ['A','B','C'].forEach(p => {
+      const pct = (priCount[p] / maxPri * 100);
+      chartsHtml += `<div class="chart-bar-row">
+        <span class="chart-bar-label">${priLabels[p]}</span>
+        <div class="chart-bar-track"><div class="chart-bar-fill" style="width:${pct}%;background:${priColors[p]}"><span class="chart-bar-count">${priCount[p]}</span></div></div>
+      </div>`;
+    });
+    chartsHtml += '</div>';
+  }
+
+  chartRow.innerHTML = chartsHtml;
+  document.getElementById('resultsSection').scrollIntoView({ behavior: 'smooth' });
+}
+
+// CSV ダウンロード
+function downloadCSV() {
+  if (!currentLeads.length) return;
+  const keys = Object.keys(currentLeads[0]);
+  const header = keys.map(k => COL_MAP[k] || k).join(',');
+  const rows = currentLeads.map(r => keys.map(k => `"${(r[k]||'').toString().replace(/"/g,'""')}"`).join(','));
+  const bom = '\uFEFF';
+  const blob = new Blob([bom + header + '\n' + rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+  downloadBlob(blob, '営業リスト.csv');
+}
+
+// JSON ダウンロード
+function downloadJSON() {
+  if (!currentLeads.length) return;
+  const blob = new Blob([JSON.stringify(currentLeads, null, 2)], { type: 'application/json' });
+  downloadBlob(blob, '営業リスト.json');
+}
+
+function downloadBlob(blob, name) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+</script>
+</body>
+</html>
