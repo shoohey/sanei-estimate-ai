@@ -1,0 +1,18 @@
+name: Keep Streamlit Alive
+
+on:
+  schedule:
+    # 毎日 9:00, 13:00, 17:00 (JST) = 0:00, 4:00, 8:00 (UTC)
+    - cron: '0 0,4,8 * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Streamlit App
+        run: |
+          curl -s -o /dev/null -w "%{http_code}" \
+            https://sanei-estimate-ai-qquj9bhytpdmvihycobxnp.streamlit.app/ \
+            || true
+          echo "Pinged at $(date -u)"
