@@ -17,4 +17,10 @@ sample/
 *.jpeg
 *.png
 !assets/**
-.vercel
+# Vercel関連（不使用、Streamlit Cloudに移行済み）
+.vercel/
+api/
+vercel.json
+
+# Streamlitシークレット
+.streamlit/secrets.toml

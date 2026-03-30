@@ -320,9 +320,14 @@ st.markdown("""
         color: #B45309;
         font-size: 0.7rem;
         font-weight: 600;
-        padding: 2px 8px;
+        padding: 3px 12px;
         border-radius: 12px;
         border: 1px solid #F59E0B;
+        box-shadow: 0 2px 6px rgba(245, 158, 11, 0.2);
+    }
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
     }
 
     /* === モバイル対応 === */
@@ -345,8 +350,13 @@ st.markdown("""
 def main():
     st.markdown("""
     <div class="app-header">
-        <h1>☀️ 太陽光発電設備 見積作成AI</h1>
-        <p>株式会社サンエー｜現調データから見積書を自動生成</p>
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+                <h1>☀️ 太陽光発電設備 見積作成AI</h1>
+                <p>株式会社サンエー｜現調データから見積書を自動生成</p>
+            </div>
+            <div style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);border-radius:8px;padding:4px 12px;font-size:0.75rem;color:rgba(255,255,255,0.85);font-weight:600;letter-spacing:0.05em;">v2.0</div>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -371,6 +381,13 @@ def main():
         _render_step3_estimate()
     elif step == 4:
         _render_step4_download()
+
+    # フッター
+    st.markdown("""
+    <div style="text-align:center;padding:2rem 0 1rem 0;margin-top:2rem;border-top:1px solid #e2e8f0;">
+        <span style="font-size:0.75rem;color:#94a3b8;">Powered by Claude AI &times; 株式会社サンエー</span>
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def _init_session():
@@ -426,7 +443,7 @@ def _render_step0_mode_select():
     with col1:
         st.markdown("""
         <div class="mode-card">
-            <span class="mode-icon">📱</span>
+            <div style="font-size:4.5rem;margin-bottom:0.5rem;line-height:1;">📱</div>
             <h3>現場入力モード</h3>
             <p>スマホ・タブレットで<br/>現調データを直接入力</p>
             <div style="margin-top:0.8rem;">
@@ -445,18 +462,20 @@ def _render_step0_mode_select():
 
     with col2:
         st.markdown("""
-        <div class="mode-card">
-            <span class="mode-icon">📄</span>
+        <div class="mode-card" style="border-color:#F5A623;position:relative;">
+            <div style="position:absolute;top:-12px;right:16px;background:linear-gradient(135deg,#F5A623,#E8961C);color:white;font-size:0.72rem;font-weight:700;padding:4px 14px;border-radius:12px;box-shadow:0 2px 8px rgba(245,166,35,0.3);">おすすめ</div>
+            <div style="font-size:4.5rem;margin-bottom:0.5rem;line-height:1;">📄</div>
             <h3>PDFアップロードモード</h3>
             <p>手書き現調シートPDFを<br/>AIが自動読み取り</p>
-            <div style="margin-top:0.8rem;">
+            <div style="margin-top:0.6rem;font-size:0.78rem;color:#475569;line-height:1.6;">対応ファイル: <b>現調シート・配管図・単線結線図</b></div>
+            <div style="margin-top:0.6rem;">
                 <span style="background:#F5F3FF;color:#5B21B6;font-size:0.75rem;padding:3px 10px;border-radius:12px;font-weight:600;">AI OCR</span>
                 <span style="background:#EBF5FF;color:#2B6CB0;font-size:0.75rem;padding:3px 10px;border-radius:12px;font-weight:600;">自動認識</span>
             </div>
         </div>
         """, unsafe_allow_html=True)
         st.markdown("")
-        if st.button("📄 PDFアップロードで開始", use_container_width=True):
+        if st.button("📄 PDFアップロードで開始", type="primary", use_container_width=True):
             st.session_state.input_mode = "pdf"
             st.session_state.step = 1
             st.rerun()
@@ -662,19 +681,89 @@ def _render_step1_pdf_upload():
         if api_key:
             os.environ["ANTHROPIC_API_KEY"] = api_key
 
+    # ドラッグ&ドロップエリアの装飾
+    st.markdown("""
+    <style>
+        section[data-testid="stFileUploader"] {
+            background: white;
+            border: 2px dashed #94a3b8;
+            border-radius: 12px;
+            padding: 1rem;
+            transition: all 0.3s ease;
+        }
+        section[data-testid="stFileUploader"]:hover {
+            border-color: #F5A623;
+            background: #FFFDF7;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
     col1, col2 = st.columns([2, 1])
     with col1:
+        st.markdown("""
+        <div style="text-align:center;padding:0.5rem 0 0.2rem 0;">
+            <div style="font-size:2.5rem;margin-bottom:0.3rem;">📂</div>
+            <div style="font-size:0.9rem;color:#475569;font-weight:500;">PDFファイルをドラッグ&ドロップ、またはクリックして選択</div>
+            <div style="font-size:0.75rem;color:#94a3b8;margin-top:0.2rem;">対応形式: PDF（現調シート・配管図・単線結線図）</div>
+        </div>
+        """, unsafe_allow_html=True)
         uploaded_files = st.file_uploader(
             "PDFをアップロード（複数可）", type=["pdf"],
             accept_multiple_files=True,
-            help="現調シート・配管図・単線結線図など、関連するPDFをまとめてアップロードできます")
+            help="現調シート・配管図・単線結線図など、関連するPDFをまとめてアップロードできます",
+            label_visibility="collapsed")
     with col2:
         st.session_state.client_name = st.text_input(
             "宛先会社名", value=st.session_state.client_name,
             placeholder="例: 株式会社アローズ")
 
+        # サンプルで試すボタン
+        sample_path = os.path.join(os.path.dirname(__file__), "sample", "現調シート.pdf")
+        if os.path.exists(sample_path) and not uploaded_files:
+            st.markdown("")
+            if st.button("🧪 サンプルで試す", use_container_width=True, help="sample/現調シート.pdf を自動読み込みします"):
+                with open(sample_path, "rb") as f:
+                    sample_bytes = f.read()
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                    tmp.write(sample_bytes)
+                    sample_tmp_path = tmp.name
+                try:
+                    images = pdf_to_images(sample_tmp_path, dpi=150)
+                    st.session_state.pdf_images = images
+                    st.session_state.tmp_pdf_paths = [sample_tmp_path]
+                    progress_bar = st.progress(0, text="準備中...")
+                    progress_bar.progress(10, text="サンプルPDFを読み込み中...")
+                    progress_bar.progress(30, text="AI解析を開始しています...")
+                    survey = extract_survey_data_multi([sample_tmp_path])
+                    progress_bar.progress(90, text="データを整理しています...")
+                    progress_bar.progress(100, text="読み取り完了！")
+                    st.session_state.survey_data = survey
+                    st.session_state.step = 2
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"⚠️ サンプルの読み取りに失敗しました: {e}")
+
     if uploaded_files:
-        st.subheader(f"アップロードされたPDF（{len(uploaded_files)}件）")
+        st.markdown(f"""
+        <div style="background:white;border-radius:10px;padding:12px 16px;margin:0.8rem 0;box-shadow:0 2px 8px rgba(0,0,0,0.06);border:1px solid #e8ecf1;">
+            <div style="font-size:0.9rem;font-weight:600;color:#1B2D45;margin-bottom:8px;">アップロードされたPDF（{len(uploaded_files)}件）</div>
+        """, unsafe_allow_html=True)
+        for uf in uploaded_files:
+            fsize = len(uf.getvalue())
+            if fsize >= 1024 * 1024:
+                size_str = f"{fsize / (1024*1024):.1f} MB"
+            else:
+                size_str = f"{fsize / 1024:.0f} KB"
+            st.markdown(f"""
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:#f8fafc;border-radius:6px;margin:4px 0;font-size:0.85rem;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:1.1rem;">📎</span>
+                    <span style="font-weight:500;color:#1B2D45;">{uf.name}</span>
+                </div>
+                <span style="color:#94a3b8;font-size:0.78rem;">{size_str}</span>
+            </div>
+            """, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
 
         # 各ファイルを一時保存し画像変換
         tmp_paths = []
@@ -719,9 +808,12 @@ def _render_step1_pdf_upload():
             if st.button(label, type="primary", use_container_width=True):
                 progress_bar = st.progress(0, text="準備中...")
                 try:
-                    progress_bar.progress(10, text="PDFを解析中...（自動リトライ機能付き）")
+                    progress_bar.progress(10, text="📄 PDFを画像に変換中...")
+                    progress_bar.progress(30, text="🤖 AIが文字を認識しています...")
                     survey = extract_survey_data_multi(tmp_paths)
-                    progress_bar.progress(100, text="読み取り完了！")
+                    progress_bar.progress(60, text="📊 データを構造化しています...")
+                    progress_bar.progress(90, text="✅ 検証・整理中...")
+                    progress_bar.progress(100, text="🎉 読み取り完了！")
                     st.session_state.survey_data = survey
                     st.session_state.step = 2
                     st.rerun()
@@ -991,13 +1083,21 @@ def _render_step3_estimate():
 
     st.divider()
 
-    # カテゴリ別タブ
+    # カテゴリ別タブ（アイコン付き）
+    _cat_icons = {
+        CategoryType.SUPPLIED_ITEMS: "📦",
+        CategoryType.MATERIALS: "🔧",
+        CategoryType.CONSTRUCTION: "🏗️",
+        CategoryType.OTHER_EXPENSES: "💰",
+        CategoryType.ANCILLARY_WORK: "🔨",
+    }
     tab_names = []
     display_cats = []
     for cat in estimate.summary.categories:
         if cat.category == CategoryType.SPECIAL_NOTES and not cat.items:
             continue
-        tab_names.append(f"{cat.category_number}. {cat.category.value} (¥{cat.total:,})")
+        icon = _cat_icons.get(cat.category, "📋")
+        tab_names.append(f"{icon} {cat.category_number}. {cat.category.value} (¥{cat.total:,})")
         display_cats.append(cat)
 
     tabs = st.tabs(tab_names)
@@ -1028,8 +1128,23 @@ def _render_step3_estimate():
 
 
 def _render_category_editor(estimate: EstimateData, cat_idx: int, cat):
+    # テーブルヘッダー
+    st.markdown("""
+    <div class="estimate-row-header">
+        <div style="width:40px;text-align:center;">No</div>
+        <div style="flex:3;">摘要</div>
+        <div style="flex:3;">備考</div>
+        <div style="width:90px;text-align:right;">数量</div>
+        <div style="width:100px;text-align:right;">単価</div>
+        <div style="width:110px;text-align:right;">金額</div>
+    </div>
+    """, unsafe_allow_html=True)
+
     for item_idx, item in enumerate(cat.items):
         is_manual = item.is_manual_input
+
+        if is_manual:
+            st.markdown('<div style="background:linear-gradient(90deg,#FFFBEB,#FFF9E6);border-left:3px solid #F5A623;border-radius:4px;padding:2px 0;margin:2px 0;">', unsafe_allow_html=True)
 
         with st.container():
             cols = st.columns([1, 4, 4, 2, 2, 2])
@@ -1063,7 +1178,7 @@ def _render_category_editor(estimate: EstimateData, cat_idx: int, cat):
                     estimate.cover.tax = estimate.summary.tax
 
                 st.markdown(
-                    '<span class="manual-badge">⚠ 手動入力</span>',
+                    '<span class="manual-badge" style="animation:pulse 2s infinite;">⚠ 手動入力 — 単価・金額を入力してください</span>',
                     unsafe_allow_html=True)
             else:
                 with cols[3]:
@@ -1075,6 +1190,9 @@ def _render_category_editor(estimate: EstimateData, cat_idx: int, cat):
 
             if item.reasoning and item.reasoning.formula:
                 st.caption(f"  💡 {item.reasoning.formula}")
+
+        if is_manual:
+            st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown(f'<div class="estimate-total">{cat.category.value} 合計: &yen;{cat.total:,}</div>', unsafe_allow_html=True)
 
@@ -1102,6 +1220,28 @@ def _render_step4_download():
     </div>
     """, unsafe_allow_html=True)
 
+    # 見積書表紙プレビュー
+    client_display = estimate.cover.client_name or st.session_state.client_name or "---"
+    st.markdown(f"""
+    <div style="max-width:560px;margin:0 auto 1.5rem auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 4px 15px rgba(0,0,0,0.08);border:1px solid #e8ecf1;">
+        <div style="background:linear-gradient(135deg,#1B2D45,#2D4A6F);padding:14px 20px;color:white;font-weight:600;font-size:0.95rem;">📋 見積書 表紙プレビュー</div>
+        <div style="padding:16px 20px;">
+            <div style="display:grid;grid-template-columns:100px 1fr;gap:8px 16px;font-size:0.88rem;">
+                <div style="color:#94a3b8;font-weight:500;">見積ID</div>
+                <div style="color:#1B2D45;font-weight:600;">{estimate.cover.estimate_id}</div>
+                <div style="color:#94a3b8;font-weight:500;">宛先</div>
+                <div style="color:#1B2D45;font-weight:600;">{client_display} 御中</div>
+                <div style="color:#94a3b8;font-weight:500;">工事名</div>
+                <div style="color:#1B2D45;font-weight:600;">{estimate.cover.project_name or '---'}</div>
+                <div style="color:#94a3b8;font-weight:500;">発行日</div>
+                <div style="color:#1B2D45;">{estimate.cover.issue_date}</div>
+                <div style="color:#94a3b8;font-weight:500;">有効期限</div>
+                <div style="color:#1B2D45;">{estimate.cover.valid_until}</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
     # 金額サマリー
     st.markdown(f"""
     <div style="max-width:420px;margin:0 auto 1.5rem auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 4px 15px rgba(0,0,0,0.08);">
@@ -1124,10 +1264,11 @@ def _render_step4_download():
     col_sp1, col1, col2, col_sp2 = st.columns([0.5, 2, 2, 0.5])
     with col1:
         project_name = estimate.cover.project_name or "見積書"
-        st.download_button(
+        if st.download_button(
             label="📥 見積書PDF ダウンロード", data=pdf_bytes,
             file_name=f"{project_name}.pdf", mime="application/pdf",
-            type="primary", use_container_width=True)
+            type="primary", use_container_width=True):
+            st.markdown('<div class="success-box" style="text-align:center;">✅ 見積書PDFのダウンロードを開始しました</div>', unsafe_allow_html=True)
 
     with col2:
         reasoning_text = "見積根拠一覧\n" + "=" * 50 + "\n\n"
@@ -1139,11 +1280,12 @@ def _render_step4_download():
         for r in estimate.reasoning_list:
             reasoning_text += f"  {r}\n"
 
-        st.download_button(
+        if st.download_button(
             label="📝 根拠一覧テキスト ダウンロード",
             data=reasoning_text.encode("utf-8"),
             file_name=f"根拠一覧_{estimate.cover.estimate_id}.txt",
-            mime="text/plain", use_container_width=True)
+            mime="text/plain", use_container_width=True):
+            st.markdown('<div class="success-box" style="text-align:center;">✅ 根拠一覧のダウンロードを開始しました</div>', unsafe_allow_html=True)
 
     st.markdown("")
     st.markdown("")
