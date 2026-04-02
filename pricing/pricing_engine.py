@@ -27,6 +27,9 @@ def generate_estimate(survey: SurveyData, client_name: str = "") -> EstimateData
     # カバーページ情報
     estimate.cover.estimate_id = generate_estimate_id()
     estimate.cover.issue_date = date.today().strftime("%Y/%m/%d")
+    from datetime import timedelta
+    validity_date = date.today() + timedelta(days=30)
+    estimate.cover.validity_period = validity_date.strftime("%Y/%m/%d")
     estimate.cover.client_name = client_name
     estimate.cover.project_name = (
         f"{survey.project.project_name}　太陽光設置工事 見積"

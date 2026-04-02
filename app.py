@@ -484,10 +484,54 @@ def _render_step0_mode_select():
 # =============================================================
 # Step 1A: 現場入力モード
 # =============================================================
+def _load_sample_survey() -> SurveyData:
+    """デモ用サンプルデータを返す"""
+    s = SurveyData()
+    s.project.project_name = "テックランド掛川店"
+    s.project.address = "静岡県掛川市細田231-1"
+    s.project.postal_code = "436-0048"
+    s.project.survey_date = date.today().strftime("%Y/%m/%d")
+    s.project.weather = "晴れ"
+    s.project.surveyor = "田中 太郎"
+    s.equipment.module_maker = "LONGI"
+    s.equipment.module_model = "LR7-72HVH-660M"
+    s.equipment.module_output_w = 660
+    s.equipment.planned_panels = 288
+    s.equipment.pv_capacity_kw = 288 * 660 / 1000  # 190.08kW
+    s.equipment.design_status = DesignStatus.CONFIRMED
+    s.high_voltage.building_drawing = True
+    s.high_voltage.single_line_diagram = True
+    s.high_voltage.single_line_diagram_note = "既存"
+    s.high_voltage.ground_type = GroundType.A
+    s.high_voltage.c_installation = CInstallation.POSSIBLE
+    s.high_voltage.vt_available = True
+    s.high_voltage.ct_available = True
+    s.high_voltage.relay_space = True
+    s.high_voltage.pcs_space = True
+    s.high_voltage.pcs_location = LocationType.OUTDOOR
+    s.high_voltage.tr_capacity = "十分"
+    s.high_voltage.separation_ns_mm = 3000
+    s.high_voltage.separation_ew_mm = 2500
+    s.high_voltage.pre_use_self_check = True
+    s.supplementary.crane_available = True
+    s.supplementary.scaffold_needed = True
+    s.supplementary.scaffold_location = "屋上西側"
+    s.supplementary.cubicle_location = True
+    s.supplementary.wiring_route = "確定"
+    s.supplementary.pole_number = "KK-1234"
+    return s
+
+
 def _render_step1_direct_input():
     st.markdown('<div style="margin-bottom:0.5rem;"><span style="font-size:1.25rem;font-weight:700;color:#1B2D45;">📱 現調データ入力</span><span style="margin-left:12px;color:#64748b;font-size:0.85rem;">現場で調査した内容を入力してください</span></div>', unsafe_allow_html=True)
 
     survey: SurveyData = st.session_state.survey_data
+
+    # サンプルデータ入力ボタン
+    if st.button("🧪 サンプルデータを入力（デモ用）", help="テックランド掛川店のサンプルデータを自動入力します"):
+        st.session_state.survey_data = _load_sample_survey()
+        st.session_state.client_name = "株式会社ヤマダデンキ"
+        st.rerun()
 
     # 宛先
     st.session_state.client_name = st.text_input(
@@ -676,10 +720,17 @@ def _render_step1_pdf_upload():
     # API Key チェック
     api_key = config.get_api_key()
     if not api_key:
-        st.error("ANTHROPIC_API_KEY が設定されていません。")
+        st.warning("⚠️ ANTHROPIC_API_KEY が設定されていません。PDF読み取り（AI OCR）には APIキーが必要です。")
         api_key = st.text_input("API Key を入力（一時的に使用）", type="password")
         if api_key:
             os.environ["ANTHROPIC_API_KEY"] = api_key
+        else:
+            st.info("💡 APIキーがない場合は **現場入力モード** をお使いください。サンプルデータで見積作成のデモが可能です。")
+            if st.button("📱 現場入力モードに切り替える"):
+                st.session_state.input_mode = "direct"
+                st.session_state.survey_data = SurveyData()
+                st.session_state.step = 1
+                st.rerun()
 
     # ドラッグ&ドロップエリアの装飾
     st.markdown("""
@@ -1085,11 +1136,11 @@ def _render_step3_estimate():
 
     # カテゴリ別タブ（アイコン付き）
     _cat_icons = {
-        CategoryType.SUPPLIED_ITEMS: "📦",
-        CategoryType.MATERIALS: "🔧",
+        CategoryType.SUPPLIED: "📦",
+        CategoryType.MATERIAL: "🔧",
         CategoryType.CONSTRUCTION: "🏗️",
-        CategoryType.OTHER_EXPENSES: "💰",
-        CategoryType.ANCILLARY_WORK: "🔨",
+        CategoryType.OVERHEAD: "💰",
+        CategoryType.ADDITIONAL: "🔨",
     }
     tab_names = []
     display_cats = []
@@ -1236,7 +1287,7 @@ def _render_step4_download():
                 <div style="color:#94a3b8;font-weight:500;">発行日</div>
                 <div style="color:#1B2D45;">{estimate.cover.issue_date}</div>
                 <div style="color:#94a3b8;font-weight:500;">有効期限</div>
-                <div style="color:#1B2D45;">{estimate.cover.valid_until}</div>
+                <div style="color:#1B2D45;">{estimate.cover.validity_period}</div>
             </div>
         </div>
     </div>
