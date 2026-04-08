@@ -484,8 +484,47 @@ def _render_step0_mode_select():
 # =============================================================
 # Step 1A: 現場入力モード
 # =============================================================
-def _load_sample_survey() -> SurveyData:
-    """デモ用サンプルデータを返す"""
+
+# サンプルデータのバリアント定義（Step0/Step1から選択できるようにする）
+SAMPLE_VARIANTS = {
+    "basic": {
+        "label": "基本案件 - テックランド掛川店 190.08kW",
+        "description": "660W × 288枚 / 屋上設置 / 標準案件",
+    },
+    "small": {
+        "label": "小規模案件 - コンビニ屋上 50kW",
+        "description": "400W × 125枚 / コンビニチェーン向け",
+    },
+    "large": {
+        "label": "大規模案件 - 工場屋根 500kW",
+        "description": "550W × 910枚 / 大規模工場屋根設置",
+    },
+}
+
+
+def _load_sample_survey(variant: str = "basic") -> SurveyData:
+    """デモ用サンプルデータを返す
+
+    Args:
+        variant: "basic" / "small" / "large"（未指定時は basic を返す）
+
+    後方互換: 引数なしで呼ばれた場合は従来の「テックランド掛川店」を返す。
+    """
+    # 既知のバリアント以外は basic にフォールバック
+    if variant not in SAMPLE_VARIANTS:
+        variant = "basic"
+
+    if variant == "basic":
+        return _build_sample_basic()
+    elif variant == "small":
+        return _build_sample_small()
+    elif variant == "large":
+        return _build_sample_large()
+    return _build_sample_basic()
+
+
+def _build_sample_basic() -> SurveyData:
+    """基本案件: テックランド掛川店 190.08kW（660W × 288枚）"""
     s = SurveyData()
     s.project.project_name = "テックランド掛川店"
     s.project.address = "静岡県掛川市細田231-1"
@@ -522,16 +561,151 @@ def _load_sample_survey() -> SurveyData:
     return s
 
 
+def _build_sample_small() -> SurveyData:
+    """小規模案件: コンビニ屋上 50kW（400W × 125枚）"""
+    s = SurveyData()
+    s.project.project_name = "セブンイレブン静岡本通店"
+    s.project.address = "静岡県静岡市葵区本通1-2-3"
+    s.project.postal_code = "420-0033"
+    s.project.survey_date = date.today().strftime("%Y/%m/%d")
+    s.project.weather = "晴れ"
+    s.project.surveyor = "鈴木 花子"
+    s.equipment.module_maker = "シャープ"
+    s.equipment.module_model = "NU-400AJ"
+    s.equipment.module_output_w = 400
+    s.equipment.planned_panels = 125
+    s.equipment.pv_capacity_kw = 125 * 400 / 1000  # 50.00kW
+    s.equipment.design_status = DesignStatus.CONFIRMED
+    s.high_voltage.building_drawing = True
+    s.high_voltage.single_line_diagram = True
+    s.high_voltage.single_line_diagram_note = "既存"
+    s.high_voltage.ground_type = GroundType.D
+    s.high_voltage.c_installation = CInstallation.POSSIBLE
+    s.high_voltage.vt_available = False
+    s.high_voltage.ct_available = True
+    s.high_voltage.relay_space = True
+    s.high_voltage.pcs_space = True
+    s.high_voltage.pcs_location = LocationType.INDOOR
+    s.high_voltage.tr_capacity = "十分"
+    s.high_voltage.separation_ns_mm = 1500
+    s.high_voltage.separation_ew_mm = 1200
+    s.high_voltage.pre_use_self_check = False
+    s.supplementary.crane_available = False
+    s.supplementary.scaffold_needed = True
+    s.supplementary.scaffold_location = "建物東側（歩道側）"
+    s.supplementary.cubicle_location = False
+    s.supplementary.wiring_route = "確定"
+    s.supplementary.pole_number = "SZ-5678"
+    return s
+
+
+def _build_sample_large() -> SurveyData:
+    """大規模案件: 工場屋根 500kW(550W × 910枚）"""
+    s = SurveyData()
+    s.project.project_name = "株式会社ハマナカ工業 第2工場"
+    s.project.address = "静岡県浜松市中央区中沢町10-1"
+    s.project.postal_code = "432-8002"
+    s.project.survey_date = date.today().strftime("%Y/%m/%d")
+    s.project.weather = "曇り"
+    s.project.surveyor = "佐藤 一郎"
+    s.equipment.module_maker = "LONGI"
+    s.equipment.module_model = "Hi-MO 6 LR5-72HPH-550M"
+    s.equipment.module_output_w = 550
+    s.equipment.planned_panels = 910
+    s.equipment.pv_capacity_kw = 910 * 550 / 1000  # 500.50kW
+    s.equipment.design_status = DesignStatus.TENTATIVE
+    s.high_voltage.building_drawing = True
+    s.high_voltage.single_line_diagram = True
+    s.high_voltage.single_line_diagram_note = "新設予定"
+    s.high_voltage.ground_type = GroundType.A
+    s.high_voltage.c_installation = CInstallation.POSSIBLE
+    s.high_voltage.vt_available = True
+    s.high_voltage.ct_available = True
+    s.high_voltage.relay_space = True
+    s.high_voltage.pcs_space = True
+    s.high_voltage.pcs_location = LocationType.OUTDOOR
+    s.high_voltage.tr_capacity = "十分"
+    s.high_voltage.separation_ns_mm = 5000
+    s.high_voltage.separation_ew_mm = 4500
+    s.high_voltage.pre_use_self_check = True
+    s.supplementary.crane_available = True
+    s.supplementary.scaffold_needed = True
+    s.supplementary.scaffold_location = "工場西側 / 南側（2面）"
+    s.supplementary.cubicle_location = True
+    s.supplementary.wiring_route = "未確定"
+    s.supplementary.pole_number = "HM-2345"
+    s.supplementary.handwritten_notes = "屋根面積が広く、パネル配置の最適化が必要"
+    return s
+
+
+# =============================================================
+# 信頼度バッジのヘルパー関数（Step 2 で使用）
+# =============================================================
+def _conf_badge(survey: SurveyData, field_path: str) -> str:
+    """フィールドの信頼度バッジを返す
+
+    Args:
+        survey: 現調データ
+        field_path: "project.project_name" のようなドット区切りのパス
+
+    Returns:
+        🔴 (low) / 🟡 (medium) / "" (high または未設定)
+    """
+    if not survey or not survey.field_confidences:
+        return ""
+    conf = survey.field_confidences.get(field_path)
+    if conf is None:
+        return ""
+    # Pydantic経由の場合はEnum、手動設定は文字列の可能性がある
+    conf_value = conf.value if hasattr(conf, "value") else conf
+    if conf_value == ConfidenceLevel.LOW.value:
+        return "🔴"
+    if conf_value == ConfidenceLevel.MEDIUM.value:
+        return "🟡"
+    return ""
+
+
+def _field_errors(validation, keyword: str) -> list[str]:
+    """バリデーション結果から指定キーワードを含むエラー/警告を抽出
+
+    特定フィールド直下に警告を表示するための簡易マッチ（キーワードベース）。
+    """
+    hits: list[str] = []
+    for msg in validation.errors + validation.warnings:
+        if keyword in msg:
+            hits.append(msg)
+    return hits
+
+
 def _render_step1_direct_input():
     st.markdown('<div style="margin-bottom:0.5rem;"><span style="font-size:1.25rem;font-weight:700;color:#1B2D45;">📱 現調データ入力</span><span style="margin-left:12px;color:#64748b;font-size:0.85rem;">現場で調査した内容を入力してください</span></div>', unsafe_allow_html=True)
 
     survey: SurveyData = st.session_state.survey_data
 
-    # サンプルデータ入力ボタン
-    if st.button("🧪 サンプルデータを入力（デモ用）", help="テックランド掛川店のサンプルデータを自動入力します"):
-        st.session_state.survey_data = _load_sample_survey()
-        st.session_state.client_name = "株式会社ヤマダデンキ"
-        st.rerun()
+    # サンプルデータ入力（3バリアントから選択）
+    with st.expander("🧪 サンプルデータを入力（デモ用）", expanded=False):
+        st.caption("以下のサンプル案件から選んで入力欄を自動で埋めます。デモやテストに便利です。")
+        variant_keys = list(SAMPLE_VARIANTS.keys())
+        variant_labels = [SAMPLE_VARIANTS[k]["label"] for k in variant_keys]
+        selected_label = st.radio(
+            "サンプル案件を選択",
+            variant_labels,
+            index=0,
+            horizontal=False,
+            key="sample_variant_step1",
+        )
+        selected_key = variant_keys[variant_labels.index(selected_label)]
+        st.caption(SAMPLE_VARIANTS[selected_key]["description"])
+        if st.button("このサンプルを入力", key="apply_sample_step1"):
+            st.session_state.survey_data = _load_sample_survey(selected_key)
+            # バリアントに応じた宛先企業を自動設定
+            client_map = {
+                "basic": "株式会社ヤマダデンキ",
+                "small": "株式会社セブン-イレブン・ジャパン",
+                "large": "株式会社ハマナカ工業",
+            }
+            st.session_state.client_name = client_map.get(selected_key, "")
+            st.rerun()
 
     # 宛先
     st.session_state.client_name = st.text_input(
@@ -690,14 +864,23 @@ def _render_step1_direct_input():
     # --- ナビゲーション ---
     st.divider()
 
-    # バリデーション
+    # バリデーション（メッセージは survey_validator 側で絵文字込み）
     validation = validate_survey_data(survey)
     if validation.errors:
         for err in validation.errors:
-            st.markdown(f'<div class="error-box">❌ {err}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="error-box">{err}</div>', unsafe_allow_html=True)
     if validation.warnings:
         for warn in validation.warnings:
-            st.markdown(f'<div class="warning-box">⚠️ {warn}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="warning-box">{warn}</div>', unsafe_allow_html=True)
+
+    # 自動修正ボタン（Step1でも適用可能にする）
+    if validation.auto_fixes:
+        if st.button(f"⚡ 自動修正を適用 ({len(validation.auto_fixes)}件)", key="step1_autofix"):
+            for fix in validation.auto_fixes:
+                fix.apply(survey)
+            st.session_state.survey_data = survey
+            st.success(f"{len(validation.auto_fixes)}件の自動修正を適用しました")
+            st.rerun()
 
     nav_cols = st.columns([1, 1, 2])
     with nav_cols[0]:
@@ -901,21 +1084,72 @@ def _render_step2_review():
     else:
         st.markdown('<div style="margin-bottom:0.5rem;"><span style="font-size:1.25rem;font-weight:700;color:#1B2D45;">📱 入力データの確認</span></div>', unsafe_allow_html=True)
 
-    # バリデーション
+    # バリデーション（auto_fixes / low_confidence_fields を含む拡張版）
     validation = validate_survey_data(survey)
+
+    # 信頼度バッジの凡例（低/中信頼度がある場合のみ表示）
+    if survey.field_confidences:
+        low_count = sum(
+            1 for c in survey.field_confidences.values()
+            if (c.value if hasattr(c, "value") else c) == ConfidenceLevel.LOW.value
+        )
+        med_count = sum(
+            1 for c in survey.field_confidences.values()
+            if (c.value if hasattr(c, "value") else c) == ConfidenceLevel.MEDIUM.value
+        )
+        if low_count or med_count:
+            st.caption(
+                f"🔴 低信頼度 {low_count}件 / 🟡 中信頼度 {med_count}件 "
+                "— 絵文字付きのフィールドはAI読み取り精度が低い可能性があります。内容を目視確認してください。"
+            )
+
+    # エラー/警告表示
     if validation.errors:
         for err in validation.errors:
-            st.markdown(f'<div class="error-box">❌ {err}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="error-box">{err}</div>', unsafe_allow_html=True)
     if validation.warnings:
         for warn in validation.warnings:
-            st.markdown(f'<div class="warning-box">⚠️ {warn}</div>', unsafe_allow_html=True)
-    if is_pdf_mode and survey.extraction_warnings:
-        st.info("**AI読み取りの注意事項:**")
-        for w in survey.extraction_warnings:
-            st.caption(f"  - {w}")
+            st.markdown(f'<div class="warning-box">{warn}</div>', unsafe_allow_html=True)
 
-    # レイアウト（PDFモードは左にPDF、右にフォーム。直接入力モードはフォームのみ）
+    # 自動修正ボタン（画面上部に配置）
+    if validation.auto_fixes:
+        fix_cols = st.columns([3, 1])
+        with fix_cols[0]:
+            fix_preview = " / ".join(f"・{f.description}" for f in validation.auto_fixes[:3])
+            if len(validation.auto_fixes) > 3:
+                fix_preview += f" ...他{len(validation.auto_fixes)-3}件"
+            st.caption(f"💡 自動修正候補: {fix_preview}")
+        with fix_cols[1]:
+            if st.button(
+                f"⚡ 自動修正を適用 ({len(validation.auto_fixes)}件)",
+                key="step2_autofix",
+                type="secondary",
+                use_container_width=True,
+            ):
+                for fix in validation.auto_fixes:
+                    fix.apply(survey)
+                st.session_state.survey_data = survey
+                st.success(f"{len(validation.auto_fixes)}件の自動修正を適用しました")
+                st.rerun()
+
+    if is_pdf_mode and survey.extraction_warnings:
+        with st.expander("🔍 AI読み取りの注意事項", expanded=False):
+            for w in survey.extraction_warnings:
+                st.caption(f"  - {w}")
+
+    # レイアウト選択（PDFモードのみ: 横並び / タブ切替）
+    layout_mode = "side_by_side"
     if is_pdf_mode:
+        layout_mode = st.radio(
+            "表示モード",
+            options=["横並び（左:PDF / 右:フォーム）", "タブ切替（PDFとフォームを切り替え）"],
+            index=0,
+            horizontal=True,
+            key="pdf_layout_mode",
+        )
+        layout_mode = "side_by_side" if layout_mode.startswith("横並び") else "tabs"
+
+    if is_pdf_mode and layout_mode == "side_by_side":
         col_pdf, col_form = st.columns([1, 1])
         with col_pdf:
             st.markdown("**元のPDF**")
@@ -924,6 +1158,16 @@ def _render_step2_review():
                     st.image(img["image_bytes"], caption=f"ページ {img['page']}",
                              use_container_width=True)
         form_container = col_form
+    elif is_pdf_mode and layout_mode == "tabs":
+        pdf_tab, form_tab = st.tabs(["📄 PDF表示", "📝 データ編集"])
+        with pdf_tab:
+            if st.session_state.pdf_images:
+                for img in st.session_state.pdf_images:
+                    st.image(img["image_bytes"], caption=f"ページ {img['page']}",
+                             use_container_width=True)
+            else:
+                st.info("PDFが読み込まれていません")
+        form_container = form_tab
     else:
         form_container = st.container()
 
@@ -938,48 +1182,87 @@ def _render_step2_review():
         # 案件基本情報
         with st.expander("📋 案件基本情報", expanded=True):
             survey.project.project_name = st.text_input(
-                "案件名", value=survey.project.project_name, key="r_name")
+                f"案件名 {_conf_badge(survey, 'project.project_name')}",
+                value=survey.project.project_name, key="r_name")
+            for hit in _field_errors(validation, "案件名"):
+                st.caption(f"↳ {hit}")
+
             survey.project.address = st.text_input(
-                "所在地", value=survey.project.address, key="r_addr")
+                f"所在地 {_conf_badge(survey, 'project.address')}",
+                value=survey.project.address, key="r_addr")
+            for hit in _field_errors(validation, "所在地"):
+                st.caption(f"↳ {hit}")
+
             survey.project.postal_code = st.text_input(
-                "郵便番号", value=survey.project.postal_code, key="r_zip")
+                f"郵便番号 {_conf_badge(survey, 'project.postal_code')}",
+                value=survey.project.postal_code, key="r_zip",
+                placeholder="例: 436-0048")
+            for hit in _field_errors(validation, "郵便番号"):
+                st.caption(f"↳ {hit}")
+
             c1, c2 = st.columns(2)
             with c1:
                 survey.project.survey_date = st.text_input(
-                    "調査日", value=survey.project.survey_date, key="r_date")
+                    f"調査日 {_conf_badge(survey, 'project.survey_date')}",
+                    value=survey.project.survey_date, key="r_date")
+                for hit in _field_errors(validation, "調査日"):
+                    st.caption(f"↳ {hit}")
             with c2:
                 survey.project.weather = st.text_input(
-                    "天気", value=survey.project.weather, key="r_weather")
+                    f"天気 {_conf_badge(survey, 'project.weather')}",
+                    value=survey.project.weather, key="r_weather")
             survey.project.surveyor = st.text_input(
-                "調査者", value=survey.project.surveyor, key="r_surveyor")
+                f"調査者 {_conf_badge(survey, 'project.surveyor')}",
+                value=survey.project.surveyor, key="r_surveyor")
+            for hit in _field_errors(validation, "調査者"):
+                st.caption(f"↳ {hit}")
 
         # 計画設備情報
         with st.expander("🔧 計画設備情報", expanded=True):
             c1, c2 = st.columns(2)
             with c1:
                 survey.equipment.module_maker = st.text_input(
-                    "モジュールメーカー", value=survey.equipment.module_maker, key="r_maker")
+                    f"モジュールメーカー {_conf_badge(survey, 'equipment.module_maker')}",
+                    value=survey.equipment.module_maker, key="r_maker")
+                for hit in _field_errors(validation, "モジュールメーカー"):
+                    st.caption(f"↳ {hit}")
+
                 survey.equipment.module_model = st.text_input(
-                    "モジュール型式", value=survey.equipment.module_model, key="r_model")
+                    f"モジュール型式 {_conf_badge(survey, 'equipment.module_model')}",
+                    value=survey.equipment.module_model, key="r_model")
+                for hit in _field_errors(validation, "モジュール型式"):
+                    st.caption(f"↳ {hit}")
             with c2:
                 survey.equipment.module_output_w = st.number_input(
-                    "定格出力 (W/枚)", value=float(survey.equipment.module_output_w),
+                    f"定格出力 (W/枚) {_conf_badge(survey, 'equipment.module_output_w')}",
+                    value=float(survey.equipment.module_output_w),
                     min_value=0.0, step=1.0, key="r_output")
-                survey.equipment.planned_panels = st.number_input(
-                    "設置予定枚数", value=int(survey.equipment.planned_panels),
-                    min_value=0, step=1, key="r_panels")
-            survey.equipment.pv_capacity_kw = st.number_input(
-                "想定PV容量 (kW)", value=float(survey.equipment.pv_capacity_kw),
-                min_value=0.0, step=0.01, format="%.2f", key="r_kw")
+                for hit in _field_errors(validation, "モジュール定格出力"):
+                    st.caption(f"↳ {hit}")
 
-            # PV容量チェック
+                survey.equipment.planned_panels = st.number_input(
+                    f"設置予定枚数 {_conf_badge(survey, 'equipment.planned_panels')}",
+                    value=int(survey.equipment.planned_panels),
+                    min_value=0, step=1, key="r_panels")
+                for hit in _field_errors(validation, "設置予定枚数"):
+                    st.caption(f"↳ {hit}")
+
+            survey.equipment.pv_capacity_kw = st.number_input(
+                f"想定PV容量 (kW) {_conf_badge(survey, 'equipment.pv_capacity_kw')}",
+                value=float(survey.equipment.pv_capacity_kw),
+                min_value=0.0, step=0.01, format="%.2f", key="r_kw")
+            for hit in _field_errors(validation, "PV容量"):
+                st.caption(f"↳ {hit}")
+
+            # PV容量の計算値表示＋クイック補正ボタン
             if survey.equipment.module_output_w > 0 and survey.equipment.planned_panels > 0:
                 calc_kw = survey.equipment.planned_panels * survey.equipment.module_output_w / 1000
                 if abs(calc_kw - survey.equipment.pv_capacity_kw) > 0.1:
                     st.warning(
-                        f"計算値: {survey.equipment.planned_panels}枚 x "
-                        f"{survey.equipment.module_output_w}W / 1000 = {calc_kw:.2f}kW "
-                        f"（入力値: {survey.equipment.pv_capacity_kw}kW）")
+                        f"計算値: {survey.equipment.planned_panels}枚 × "
+                        f"{survey.equipment.module_output_w:.0f}W ÷ 1000 = {calc_kw:.2f}kW "
+                        f"（入力値: {survey.equipment.pv_capacity_kw:.2f}kW）"
+                    )
                     if st.button("計算値で更新", key="r_update_kw"):
                         survey.equipment.pv_capacity_kw = calc_kw
                         st.rerun()
@@ -997,7 +1280,10 @@ def _render_step2_review():
                 survey.high_voltage.building_drawing = st.checkbox(
                     "建物図面あり", value=survey.high_voltage.building_drawing, key="r_drawing")
                 survey.high_voltage.single_line_diagram = st.checkbox(
-                    "単線結線図あり", value=survey.high_voltage.single_line_diagram, key="r_sld")
+                    f"単線結線図あり {_conf_badge(survey, 'high_voltage.single_line_diagram')}",
+                    value=survey.high_voltage.single_line_diagram, key="r_sld")
+                for hit in _field_errors(validation, "単線結線図"):
+                    st.caption(f"↳ {hit}")
                 survey.high_voltage.vt_available = st.checkbox(
                     "VTあり", value=survey.high_voltage.vt_available, key="r_vt")
                 survey.high_voltage.ct_available = st.checkbox(
@@ -1012,25 +1298,44 @@ def _render_step2_review():
                     pcs_idx = 0 if survey.high_voltage.pcs_location == LocationType.INDOOR else 1
                     survey.high_voltage.pcs_location = LocationType(
                         st.selectbox("PCS設置場所", pcs_opts, index=pcs_idx, key="r_pcs_loc"))
+                for hit in _field_errors(validation, "PCS設置"):
+                    st.caption(f"↳ {hit}")
 
                 ground_opts = ["A", "C", "D"]
                 g_idx = ground_opts.index(survey.high_voltage.ground_type.value) \
                     if survey.high_voltage.ground_type.value in ground_opts else 0
                 survey.high_voltage.ground_type = GroundType(
-                    st.selectbox("接地種類", ground_opts, index=g_idx, key="r_ground"))
+                    st.selectbox(
+                        f"接地種類 {_conf_badge(survey, 'high_voltage.ground_type')}",
+                        ground_opts, index=g_idx, key="r_ground"))
+                for hit in _field_errors(validation, "接地種類"):
+                    st.caption(f"↳ {hit}")
 
                 survey.high_voltage.pre_use_self_check = st.checkbox(
                     "使用前自己確認あり", value=survey.high_voltage.pre_use_self_check, key="r_selfcheck")
+
+            # Tr容量（任意入力）
+            tr_opts = ["十分", "不足"]
+            tr_current = survey.high_voltage.tr_capacity if survey.high_voltage.tr_capacity in tr_opts else "十分"
+            tr_idx = tr_opts.index(tr_current)
+            survey.high_voltage.tr_capacity = st.selectbox(
+                "Tr容量余裕", tr_opts, index=tr_idx, key="r_tr_capacity")
+            for hit in _field_errors(validation, "Tr容量"):
+                st.caption(f"↳ {hit}")
 
             c1, c2 = st.columns(2)
             with c1:
                 survey.high_voltage.separation_ns_mm = st.number_input(
                     "離隔 縦(南北) mm", value=float(survey.high_voltage.separation_ns_mm),
                     min_value=0.0, step=100.0, key="r_sep_ns")
+                for hit in _field_errors(validation, "離隔距離（南北）"):
+                    st.caption(f"↳ {hit}")
             with c2:
                 survey.high_voltage.separation_ew_mm = st.number_input(
                     "離隔 横(東西) mm", value=float(survey.high_voltage.separation_ew_mm),
                     min_value=0.0, step=100.0, key="r_sep_ew")
+                for hit in _field_errors(validation, "離隔距離（東西）"):
+                    st.caption(f"↳ {hit}")
 
         # 別紙チェック項目
         with st.expander("📝 別紙チェック項目"):
@@ -1048,13 +1353,17 @@ def _render_step2_review():
                 survey.supplementary.wiring_route = st.selectbox(
                     "配管・配線ルート", wiring_opts, index=w_idx, key="r_wiring")
 
+            survey.supplementary.pole_number = st.text_input(
+                "電柱番号", value=survey.supplementary.pole_number, key="r_pole")
+
             survey.supplementary.handwritten_notes = st.text_area(
                 "備考・メモ", value=survey.supplementary.handwritten_notes, key="r_notes")
 
-    # フィードバック
+    # 改善提案（前回の「現調シートへのフィードバック」を用途明確化）
     if validation.feedback:
         st.divider()
-        st.subheader("現調シートへのフィードバック")
+        st.subheader("💡 改善提案")
+        st.caption("次回の現調時にはこの点を記入すると、より正確な見積が作成できます。")
         for fb in validation.feedback:
             st.info(f"📝 {fb}")
 
