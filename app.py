@@ -18,6 +18,21 @@ from generation.estimate_builder import build_estimate, update_line_item
 from generation.pdf_generator import generate_pdf
 from generation.csv_exporter import export_estimate_to_csv_detailed
 
+# v2.3 新機能（音声編集・屋根レイアウト・製品カタログ）
+from voice.voice_recorder import record_and_transcribe, is_whisper_available
+from voice.voice_command_parser import parse_voice_command
+from voice.estimate_editor import apply_commands
+from roof.satellite_fetcher import get_roof_view, geocode_address
+from roof.panel_layout import (
+    compute_panel_layout, panel_dimensions_from_module,
+    render_layout_svg, render_layout_png,
+)
+from product.catalog_extractor import extract_product_catalog
+from product.product_registry import (
+    load_registry, add_product, find_by_model,
+    get_active_module_for_estimate, delete_product,
+)
+
 # ページ設定
 st.set_page_config(
     page_title="見積作成AI - 株式会社サンエー",
@@ -475,7 +490,7 @@ def main():
                 <h1>☀️ 太陽光発電設備 見積作成AI</h1>
                 <p>株式会社サンエー｜現調データから見積書を自動生成</p>
             </div>
-            <div style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);border-radius:8px;padding:4px 12px;font-size:0.75rem;color:rgba(255,255,255,0.85);font-weight:600;letter-spacing:0.05em;">v2.2</div>
+            <div style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);border-radius:8px;padding:4px 12px;font-size:0.75rem;color:rgba(255,255,255,0.85);font-weight:600;letter-spacing:0.05em;">v2.3</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -1538,6 +1553,297 @@ def _render_step2_review():
 # =============================================================
 # Step 3: 見積プレビュー・編集
 # =============================================================
+# =============================================================
+# v2.3 新機能：音声編集 / 製品カタログ / 屋根レイアウト
+# =============================================================
+
+def _render_voice_edit_section(estimate: EstimateData):
+    """音声で見積を編集するセクション"""
+    with st.expander("🎤 音声で見積を編集", expanded=False):
+        st.caption("マイクボタンを押して「○○の単価を5万円に変更」のように話してください。"
+                   "AIが自然言語を解析して見積を更新します。")
+
+        # 音声入力 or テキスト入力
+        text = record_and_transcribe(
+            key="estimate_voice_input",
+            help_text="🎤 変更内容を話してください",
+        )
+
+        # 認識テキストの直接編集も許可
+        manual_text = st.text_area(
+            "または直接入力 / 認識結果の編集",
+            value=text or "",
+            placeholder="例: 太陽光パネルの単価を5万円に変更して、ケーブルラックを削除",
+            key="estimate_voice_text",
+            height=80,
+        )
+
+        col1, col2 = st.columns([1, 3])
+        with col1:
+            apply_btn = st.button("🔄 この内容で適用", type="primary", use_container_width=True, key="voice_apply_btn")
+        with col2:
+            st.caption("適用前に内容を確認できます。複数指示も可能（カンマや「、」で区切り）")
+
+        if apply_btn and manual_text.strip():
+            with st.spinner("AIが指示内容を解析中..."):
+                try:
+                    commands = parse_voice_command(manual_text, estimate)
+                except Exception as e:
+                    st.error(f"⚠️ 指示の解析に失敗しました: {e}")
+                    return
+
+            if not commands:
+                st.warning("有効な変更指示が見つかりませんでした。")
+                return
+
+            # 解析結果を表示
+            st.markdown("**解析されたコマンド:**")
+            for i, cmd in enumerate(commands, 1):
+                action = cmd.get("action", "?")
+                reason = cmd.get("reason", "")
+                st.markdown(f"  {i}. `{action}` — {reason}")
+
+            # 適用
+            new_estimate, logs = apply_commands(estimate, commands)
+            for log in logs:
+                if log.startswith("✅"):
+                    st.success(log)
+                elif log.startswith("❌"):
+                    st.error(log)
+                else:
+                    st.info(log)
+
+            # 反映
+            st.session_state.estimate_data = new_estimate
+            st.session_state.pdf_bytes = None  # 再生成必要
+            st.markdown("**変更後の合計**")
+            st.markdown(
+                f"税抜: ¥{new_estimate.summary.total_before_tax:,}　/　"
+                f"税込: **¥{new_estimate.summary.total_with_tax:,}**"
+            )
+            if st.button("✅ この変更を確定して再描画", key="voice_confirm_btn"):
+                st.rerun()
+
+
+def _render_product_info_section(estimate: EstimateData):
+    """現在使用中のモジュール表示＋製品カタログアップロード"""
+    survey: SurveyData | None = st.session_state.get("survey_data")
+
+    with st.expander("📚 製品カタログ・現使用モジュール", expanded=False):
+        # --- 現在使用中のモジュール ---
+        if survey and survey.equipment.module_maker:
+            active = get_active_module_for_estimate(survey)
+            maker = survey.equipment.module_maker
+            model = survey.equipment.module_model
+            output = survey.equipment.module_output_w
+            panels = survey.equipment.planned_panels
+
+            if active:
+                # 登録済み製品が見つかった
+                phys = active.get("physical", {})
+                elec = active.get("electrical", {})
+                st.markdown(f"""
+                <div style="background:linear-gradient(135deg,#EBF5FF,#F0F9FF);border:1px solid #93C5FD;border-radius:10px;padding:14px 18px;margin:0.5rem 0;">
+                    <div style="font-size:0.8rem;color:#1E40AF;font-weight:700;margin-bottom:6px;">✓ 登録済みカタログにマッチ</div>
+                    <div style="font-size:1.05rem;font-weight:700;color:#1B2D45;">{maker} / {active.get('model', model)}</div>
+                    <div style="margin-top:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;font-size:0.85rem;">
+                        <div><span style="color:#64748b;">出力:</span> <b>{active.get('output_w', output)}W</b></div>
+                        <div><span style="color:#64748b;">寸法:</span> {phys.get('length_mm', '?')}×{phys.get('width_mm', '?')}mm</div>
+                        <div><span style="color:#64748b;">重量:</span> {phys.get('weight_kg', '?')}kg</div>
+                        <div><span style="color:#64748b;">効率:</span> {elec.get('efficiency_pct', '?')}%</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                # 登録なし
+                st.markdown(f"""
+                <div style="background:#FFFBEB;border:1px solid #F59E0B;border-radius:10px;padding:14px 18px;margin:0.5rem 0;">
+                    <div style="font-size:0.85rem;color:#92400E;font-weight:600;margin-bottom:4px;">現在のモジュール（カタログ未登録）</div>
+                    <div style="font-size:1rem;font-weight:700;color:#1B2D45;">{maker} / {model} ({output}W × {panels}枚)</div>
+                    <div style="font-size:0.78rem;color:#92400E;margin-top:6px;">下のアップローダーからカタログを登録すると詳細仕様を表示できます</div>
+                </div>
+                """, unsafe_allow_html=True)
+        else:
+            st.info("現調シートからモジュール情報を読み取るとここに表示されます。")
+
+        st.divider()
+
+        # --- カタログアップロード ---
+        st.markdown("**📄 カタログPDF/画像のアップロード**")
+        st.caption("AIが製品仕様（メーカー・型式・出力・寸法・電気特性等）を自動抽出してレジストリに登録します。")
+        catalog_file = st.file_uploader(
+            "カタログをアップロード", type=["pdf", "png", "jpg", "jpeg"],
+            accept_multiple_files=False, key="catalog_uploader",
+            label_visibility="collapsed",
+        )
+        if catalog_file is not None:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(catalog_file.name)[1]) as tmp:
+                tmp.write(catalog_file.getvalue())
+                tmp_path = tmp.name
+
+            if st.button("🤖 AIで仕様を抽出して登録", type="primary", key="catalog_extract_btn"):
+                with st.spinner("カタログを解析中..."):
+                    try:
+                        product = extract_product_catalog(tmp_path)
+                        registered = add_product(product)
+                        st.success(f"✅ 登録しました: {registered.get('maker', '?')} / {registered.get('model', '?')}")
+                        with st.expander("抽出された仕様（詳細）", expanded=True):
+                            st.json(registered)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"⚠️ 抽出に失敗しました: {e}")
+
+        # --- 登録済み一覧 ---
+        with st.expander("📋 登録済みカタログ一覧", expanded=False):
+            registry = load_registry()
+            if not registry:
+                st.caption("まだ登録された製品はありません。")
+            else:
+                for p in registry:
+                    cols = st.columns([3, 1])
+                    with cols[0]:
+                        st.markdown(
+                            f"**{p.get('maker', '?')} / {p.get('model', '?')}** "
+                            f"<span style='color:#64748b;font-size:0.8rem;'>"
+                            f"{p.get('product_type', '?')} • {p.get('output_w', '?')}W</span>",
+                            unsafe_allow_html=True,
+                        )
+                    with cols[1]:
+                        if st.button("🗑️ 削除", key=f"del_product_{p.get('id', '')}"):
+                            delete_product(p.get("id", ""))
+                            st.rerun()
+
+
+def _render_roof_layout_section(estimate: EstimateData):
+    """屋根レイアウト図セクション"""
+    survey: SurveyData | None = st.session_state.get("survey_data")
+
+    with st.expander("🏠 屋根レイアウト図 / パネル配置", expanded=False):
+        st.caption("住所から衛星画像を取得し、パネル製品情報をもとに簡易レイアウト図を生成します。")
+
+        # --- 入力 ---
+        default_addr = survey.project.address if survey else ""
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            address = st.text_input(
+                "設置先住所", value=default_addr,
+                placeholder="例: 神奈川県横須賀市三春町2-10",
+                key="roof_address",
+            )
+        with col2:
+            zoom = st.number_input("ズーム", min_value=17, max_value=21, value=20, key="roof_zoom")
+
+        # 衛星画像取得
+        if st.button("🛰️ 衛星画像を取得", type="secondary", key="roof_fetch_btn"):
+            if not address.strip():
+                st.warning("住所を入力してください。")
+            else:
+                with st.spinner("衛星画像を取得中..."):
+                    view = get_roof_view(address.strip(), zoom=int(zoom))
+                if view.get("error"):
+                    st.error(f"⚠️ {view['error']}")
+                    st.info("💡 Google Maps APIキーがあると番地レベルでも正確に取得できます。"
+                            ".env に GOOGLE_MAPS_API_KEY を設定してください。")
+                elif view.get("image_bytes"):
+                    st.session_state.roof_view = view
+                    st.success(f"📍 取得成功: {view.get('lat'):.5f}, {view.get('lng'):.5f}  (scale {view.get('scale_meter_per_pixel', 0):.2f} m/px)")
+
+        # 取得した衛星画像表示
+        roof_view = st.session_state.get("roof_view")
+        if roof_view and roof_view.get("image_bytes"):
+            st.image(roof_view["image_bytes"], caption=f"衛星画像 ({roof_view.get('source', '?')})", use_container_width=True)
+
+        st.divider()
+
+        # --- 屋根サイズ入力 ---
+        st.markdown("**🏠 屋根サイズ入力**")
+        sz_col1, sz_col2, sz_col3 = st.columns(3)
+        with sz_col1:
+            roof_w = st.number_input("屋根幅 (m, 東西)", min_value=0.0, value=15.0, step=0.5, key="roof_w")
+        with sz_col2:
+            roof_d = st.number_input("屋根奥行 (m, 南北)", min_value=0.0, value=10.0, step=0.5, key="roof_d")
+        with sz_col3:
+            margin = st.number_input("エッジマージン (m)", min_value=0.0, value=0.5, step=0.1, key="roof_margin")
+
+        # --- パネル情報 ---
+        st.markdown("**☀️ パネル情報**（現調データから自動取得・編集可）")
+        if survey:
+            default_maker = survey.equipment.module_maker or "Canadian Solar"
+            default_model = survey.equipment.module_model or "CS7L-MS"
+            default_w = float(survey.equipment.module_output_w) or 660.0
+        else:
+            default_maker = "Canadian Solar"
+            default_model = "CS7L-MS"
+            default_w = 660.0
+
+        p_col1, p_col2, p_col3 = st.columns(3)
+        with p_col1:
+            p_maker = st.text_input("メーカー", value=default_maker, key="panel_maker")
+        with p_col2:
+            p_model = st.text_input("型式", value=default_model, key="panel_model")
+        with p_col3:
+            p_output = st.number_input("出力 (W)", min_value=0.0, value=default_w, step=10.0, key="panel_output")
+
+        # 寸法を自動取得
+        long_m, short_m = panel_dimensions_from_module(p_maker, p_model, p_output)
+        d_col1, d_col2, d_col3 = st.columns(3)
+        with d_col1:
+            panel_long = st.number_input("パネル長辺 (m)", min_value=0.0, value=float(long_m), step=0.01, key="panel_long")
+        with d_col2:
+            panel_short = st.number_input("パネル短辺 (m)", min_value=0.0, value=float(short_m), step=0.01, key="panel_short")
+        with d_col3:
+            orientation = st.selectbox("配置方向", ["auto", "portrait", "landscape"], key="panel_orientation")
+
+        # --- 計算＆描画 ---
+        if st.button("📐 レイアウトを計算", type="primary", key="layout_compute_btn"):
+            layout = compute_panel_layout(
+                roof_width_m=roof_w, roof_depth_m=roof_d,
+                panel_long_m=panel_long, panel_short_m=panel_short,
+                edge_margin_m=margin, orientation=orientation,
+            )
+            st.session_state.roof_layout = layout
+            st.session_state.roof_layout_label = f"{p_maker} {p_model} {int(p_output)}W"
+
+        # 描画
+        layout = st.session_state.get("roof_layout")
+        if layout:
+            label = st.session_state.get("roof_layout_label", "")
+            cap_kw = layout["panel_count"] * (default_w / 1000) if default_w else 0
+
+            metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+            with metric_col1:
+                st.metric("パネル枚数", f"{layout['panel_count']}枚")
+            with metric_col2:
+                st.metric("配置", f"{layout['rows']}行×{layout['cols']}列 ({layout['orientation']})")
+            with metric_col3:
+                st.metric("システム容量", f"{cap_kw:.2f} kW")
+            with metric_col4:
+                st.metric("充填率", f"{layout['fill_ratio']*100:.1f}%")
+
+            try:
+                svg = render_layout_svg(layout, label=label)
+                st.markdown(svg, unsafe_allow_html=True)
+            except Exception as e:
+                st.warning(f"SVG描画エラー: {e}")
+
+            # PNG ダウンロード
+            try:
+                png_bytes = render_layout_png(layout, label=label, dpi=150)
+                st.download_button(
+                    "📥 レイアウト図をPNGダウンロード",
+                    data=png_bytes,
+                    file_name=f"レイアウト図_{p_maker}_{p_model}.png",
+                    mime="image/png",
+                    use_container_width=True,
+                )
+            except Exception as e:
+                st.caption(f"PNG生成スキップ: {e}")
+
+
+# =============================================================
+# Step 3: 見積プレビュー
+# =============================================================
+
 def _render_step3_estimate():
     st.markdown('<div style="margin-bottom:0.5rem;"><span style="font-size:1.25rem;font-weight:700;color:#1B2D45;">📊 見積プレビュー・編集</span></div>', unsafe_allow_html=True)
 
@@ -1548,6 +1854,11 @@ def _render_step3_estimate():
             st.session_state.step = 2
             st.rerun()
         return
+
+    # v2.3 新機能セクション
+    _render_voice_edit_section(estimate)
+    _render_product_info_section(estimate)
+    _render_roof_layout_section(estimate)
 
     # 値引き調整
     with st.expander("💰 値引き調整", expanded=False):

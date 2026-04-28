@@ -1,0 +1,52 @@
+# 太陽光パネル物理寸法カタログ
+# panel_layout.py の panel_dimensions_from_module() で参照される
+# long_m: 長辺 [m]、short_m: 短辺 [m]、weight_kg: 重量 [kg]
+panels:
+  - maker: Canadian Solar
+    model_prefix: CS7L
+    output_w: 660
+    long_m: 2.384
+    short_m: 1.303
+    weight_kg: 33.5
+  - maker: Canadian Solar
+    model_prefix: CS6
+    output_w: 540
+    long_m: 2.108
+    short_m: 1.048
+    weight_kg: 27.0
+  - maker: LONGi
+    model_prefix: LR5-72HTH
+    output_w: 580
+    long_m: 2.278
+    short_m: 1.134
+    weight_kg: 32.0
+  - maker: SILFIN JAPAN
+    model_prefix: SFJ-400
+    output_w: 400
+    long_m: 1.722
+    short_m: 1.134
+    weight_kg: 21.5
+  - maker: NextEnergy
+    model_prefix: NER108
+    output_w: 460
+    long_m: 1.909
+    short_m: 1.134
+    weight_kg: 24.5
+  - maker: シャープ
+    model_prefix: NU-580
+    output_w: 580
+    long_m: 2.278
+    short_m: 1.134
+    weight_kg: 32.0
+  - maker: Trina
+    model_prefix: TSM
+    output_w: 460
+    long_m: 1.909
+    short_m: 1.134
+    weight_kg: 24.5
+  - maker: Jinko
+    model_prefix: JKM
+    output_w: 460
+    long_m: 1.903
+    short_m: 1.134
+    weight_kg: 24.0
