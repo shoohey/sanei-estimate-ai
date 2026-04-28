@@ -16,6 +16,7 @@ from extraction.survey_extractor import extract_survey_data, extract_survey_data
 from extraction.survey_validator import validate_survey_data
 from generation.estimate_builder import build_estimate, update_line_item
 from generation.pdf_generator import generate_pdf
+from generation.csv_exporter import export_estimate_to_csv_detailed
 
 # ページ設定
 st.set_page_config(
@@ -330,15 +331,134 @@ st.markdown("""
         50% { opacity: 0.7; }
     }
 
-    /* === モバイル対応 === */
+    /* === モバイル対応（タブレット以下：768px以下） === */
     @media (max-width: 768px) {
-        .app-header h1 { font-size: 1.2rem; }
-        .step-bar { padding: 0.5rem 0.8rem; }
-        .step-item { font-size: 0.7rem; }
-        .step-dot { width: 22px; height: 22px; font-size: 0.65rem; }
-        .mode-card { padding: 1.2rem 1rem; }
-        div[data-testid="stNumberInput"] label { font-size: 0.8rem; }
-        div[data-testid="column"] { padding: 0 4px; }
+        /* ヘッダー */
+        .app-header { padding: 0.9rem 1.1rem; }
+        .app-header h1 { font-size: 1.05rem; line-height: 1.3; }
+        .app-header p { font-size: 0.72rem; }
+
+        /* メイン余白を狭める */
+        .stApp [data-testid="stAppViewContainer"] .main .block-container {
+            padding: 1rem 0.7rem !important;
+            max-width: 100% !important;
+        }
+
+        /* ステップバー：横スクロール対応＋コンパクト化 */
+        .step-bar {
+            padding: 0.5rem 0.7rem;
+            overflow-x: auto;
+            flex-wrap: nowrap !important;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+        }
+        .step-bar::-webkit-scrollbar { display: none; }
+        .step-item { font-size: 0.68rem; gap: 4px; flex-shrink: 0; }
+        .step-dot { width: 20px; height: 20px; font-size: 0.62rem; }
+        .step-connector { min-width: 8px; }
+
+        /* モードカード：縦積み・サイズ縮小 */
+        .mode-card { padding: 1.4rem 1rem; }
+        .mode-card h3 { font-size: 1rem; margin: 0.4rem 0; }
+        .mode-card p { font-size: 0.85rem; }
+
+        /* セクションヘッダー */
+        .section-header { padding: 8px 12px; font-size: 0.85rem; }
+
+        /* カード */
+        .card-container { padding: 1rem; }
+
+        /* メトリクス */
+        div[data-testid="stMetric"] { padding: 8px 12px; }
+        div[data-testid="stMetric"] label { font-size: 0.72rem; }
+        div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+            font-size: 1.1rem !important;
+        }
+
+        /* 入力フィールド */
+        div[data-testid="stNumberInput"] label,
+        div[data-testid="stTextInput"] label,
+        div[data-testid="stSelectbox"] label,
+        div[data-testid="stRadio"] label {
+            font-size: 0.82rem;
+        }
+        /* iOSでズームしないよう16px最低 */
+        div[data-testid="stNumberInput"] input,
+        div[data-testid="stTextInput"] input,
+        div[data-testid="stTextArea"] textarea {
+            font-size: 16px !important;
+        }
+
+        /* ボタンを全幅・タップしやすく */
+        .stButton > button,
+        .stDownloadButton > button {
+            min-height: 46px;
+            font-size: 0.95rem !important;
+            padding: 0.7rem 1rem !important;
+        }
+        .stButton > button[kind="primary"] {
+            box-shadow: 0 2px 6px rgba(245, 166, 35, 0.25);
+        }
+
+        /* タブ：横スクロール */
+        .stTabs [data-baseweb="tab-list"] {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            flex-wrap: nowrap !important;
+        }
+        .stTabs [data-baseweb="tab"] {
+            padding: 6px 10px;
+            font-size: 0.8rem;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        /* テーブル：横スクロール */
+        div[data-testid="stTable"], .stDataFrame {
+            overflow-x: auto !important;
+        }
+
+        /* 列レイアウトの強制縦積み（重要！）*/
+        div[data-testid="stHorizontalBlock"] {
+            flex-wrap: wrap !important;
+        }
+        div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+            flex: 1 1 100% !important;
+            min-width: 100% !important;
+            padding: 0 !important;
+            margin-bottom: 0.4rem;
+        }
+
+        /* ファイルアップローダー */
+        section[data-testid="stFileUploadDropzone"] {
+            padding: 1rem !important;
+        }
+
+        /* PDFアップロードプレビュー画像を1列に */
+        div[data-testid="stImage"] img {
+            max-width: 100% !important;
+        }
+
+        /* タッチターゲットを48px最低に */
+        button, [role="button"], a {
+            min-height: 44px;
+        }
+    }
+
+    /* === 小型スマホ対応（480px以下） === */
+    @media (max-width: 480px) {
+        .app-header h1 { font-size: 0.95rem; }
+        .app-header p { font-size: 0.65rem; }
+        .step-item { font-size: 0.62rem; }
+        .step-dot { width: 18px; height: 18px; font-size: 0.55rem; }
+        .mode-card { padding: 1.1rem 0.8rem; }
+        .mode-card h3 { font-size: 0.95rem; }
+        .stButton > button,
+        .stDownloadButton > button {
+            font-size: 0.88rem !important;
+        }
+        /* モードカードのタグバッジを2行に余裕 */
+        .mode-card div span { font-size: 0.68rem !important; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -355,7 +475,7 @@ def main():
                 <h1>☀️ 太陽光発電設備 見積作成AI</h1>
                 <p>株式会社サンエー｜現調データから見積書を自動生成</p>
             </div>
-            <div style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);border-radius:8px;padding:4px 12px;font-size:0.75rem;color:rgba(255,255,255,0.85);font-weight:600;letter-spacing:0.05em;">v2.0</div>
+            <div style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);border-radius:8px;padding:4px 12px;font-size:0.75rem;color:rgba(255,255,255,0.85);font-weight:600;letter-spacing:0.05em;">v2.2</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -1651,8 +1771,8 @@ def _render_step4_download():
     </div>
     """, unsafe_allow_html=True)
 
-    # ダウンロードボタン
-    col_sp1, col1, col2, col_sp2 = st.columns([0.5, 2, 2, 0.5])
+    # ダウンロードボタン（PDF / CSV / 根拠テキスト）
+    col_sp1, col1, col2, col3, col_sp2 = st.columns([0.3, 2, 2, 2, 0.3])
     with col1:
         project_name = estimate.cover.project_name or "見積書"
         if st.download_button(
@@ -1662,6 +1782,15 @@ def _render_step4_download():
             st.markdown('<div class="success-box" style="text-align:center;">✅ 見積書PDFのダウンロードを開始しました</div>', unsafe_allow_html=True)
 
     with col2:
+        csv_bytes = export_estimate_to_csv_detailed(estimate)
+        if st.download_button(
+            label="📊 内訳CSV ダウンロード",
+            data=csv_bytes,
+            file_name=f"{project_name}_内訳.csv",
+            mime="text/csv", use_container_width=True):
+            st.markdown('<div class="success-box" style="text-align:center;">✅ 内訳CSVのダウンロードを開始しました</div>', unsafe_allow_html=True)
+
+    with col3:
         reasoning_text = "見積根拠一覧\n" + "=" * 50 + "\n\n"
         reasoning_text += f"見積ID: {estimate.cover.estimate_id}\n"
         reasoning_text += f"工事名: {estimate.cover.project_name}\n"
