@@ -1030,6 +1030,29 @@ def _render_step1_pdf_upload():
             return
 
         st.divider()
+
+        # --- 高精度オプション（v2.2 新機能）---
+        with st.expander("⚙️ 詳細オプション（v2.2 高精度モード）", expanded=False):
+            opt_col1, opt_col2 = st.columns(2)
+            with opt_col1:
+                category_choice = st.radio(
+                    "書類カテゴリ",
+                    ["自動判別", "法人・高圧", "住宅・低圧"],
+                    index=0,
+                    help="自動判別で十分ですが、明らかに住宅 or 法人と分かっている場合は明示すると精度が上がります",
+                )
+            with opt_col2:
+                use_enhancement = st.checkbox(
+                    "手書きOCR画像前処理を有効化",
+                    value=True,
+                    help="傾き補正・コントラスト強化で手書き読取精度を向上",
+                )
+                use_self_consistency = st.checkbox(
+                    "自己一貫性パス（高精度・3倍時間）",
+                    value=False,
+                    help="複数回サンプリングして多数決。精度が劇的に上がるが処理時間が3倍になる",
+                )
+
         col_back, col_read = st.columns([1, 2])
         with col_back:
             if st.button("← 入力方法に戻る"):
@@ -1041,12 +1064,20 @@ def _render_step1_pdf_upload():
             label = f"🔍 AI読み取り開始（{file_count}件 / {total_pages}ページを解析）"
             if st.button(label, type="primary", use_container_width=True):
                 progress_bar = st.progress(0, text="準備中...")
+                category_map = {"自動判別": None, "法人・高圧": "commercial", "住宅・低圧": "residential"}
+                category_arg = category_map.get(category_choice)
                 try:
                     progress_bar.progress(10, text="📄 PDFを画像に変換中...")
-                    progress_bar.progress(30, text="🤖 AIが文字を認識しています...")
-                    survey = extract_survey_data_multi(tmp_paths)
-                    progress_bar.progress(60, text="📊 データを構造化しています...")
-                    progress_bar.progress(90, text="✅ 検証・整理中...")
+                    progress_bar.progress(20, text="🔍 書類タイプを判別中（住宅 or 法人）...")
+                    progress_bar.progress(40, text="🤖 AIが手書き文字を認識しています...")
+                    survey = extract_survey_data_multi(
+                        tmp_paths,
+                        category=category_arg,
+                        use_image_enhancement=use_enhancement,
+                        use_self_consistency=use_self_consistency,
+                    )
+                    progress_bar.progress(70, text="📊 データを構造化しています...")
+                    progress_bar.progress(90, text="✅ ドメイン知識で検証・補正中...")
                     progress_bar.progress(100, text="🎉 読み取り完了！")
                     st.session_state.survey_data = survey
                     st.session_state.step = 2

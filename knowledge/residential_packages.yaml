@@ -1,0 +1,88 @@
+# 住宅向け固定パッケージ価格表
+# 用途:
+#   - 住宅向け太陽光発電システムの固定パッケージ価格マスタ
+#   - 見積もりAIが住宅案件を判定したときに、自動でパッケージ候補を提示
+#   - PV容量・モジュール構成・PCS構成からパッケージコードを逆引き
+#
+# 注: 株式会社サンエーから実データ提供待ち（2026-04-28時点）
+#     提供されたパッケージデータは下記の packages 配列に追加してください。
+#     2026-04-20の打ち合わせ合意事項: 「住宅価格パッケージと実際の見積もりを高井に送る」
+#
+# 更新日: 2026-04-28
+
+schema_version: 1
+
+# 各パッケージのスキーマ定義（参照用ドキュメント）
+schema:
+  package_code: "短いID（例: RES-5KW-A）"
+  package_name: "ユーザー向けパッケージ名"
+  pv_capacity_kw: "PV容量（kW）"
+  module:
+    maker: "モジュールメーカー"
+    model: "モジュール型式"
+    output_w: "モジュール出力（W/枚）"
+    panels: "枚数"
+  pcs:
+    maker: "パワコンメーカー"
+    model: "型式"
+    capacity_kw: "容量"
+  battery:
+    included: "true ならパッケージに蓄電池含む（false の場合は他項目は空でOK）"
+    maker: "蓄電池メーカー"
+    model: "蓄電池型式"
+    capacity_kwh: "蓄電池容量(kWh)"
+  base_price_jpy: "本体価格（税抜き、円）"
+  options:
+    - name: "オプション名"
+      price_jpy: "オプション単価（税抜き、円）"
+  notes: "備考"
+
+# サンプルパッケージ（実データ提供後に置換）
+packages:
+  - package_code: "RES-SAMPLE-5KW"
+    package_name: "住宅5kWパッケージ（サンプル）"
+    pv_capacity_kw: 5.0
+    module:
+      maker: "シャープ"
+      model: "NU-220AF"
+      output_w: 220
+      panels: 23
+    pcs:
+      maker: "オムロン"
+      model: "KP55M2"
+      capacity_kw: 5.5
+    battery:
+      included: false
+      maker: ""
+      model: ""
+      capacity_kwh: 0
+    base_price_jpy: 1500000
+    options:
+      - name: "屋根工事追加"
+        price_jpy: 200000
+    notes: "実データ未到着のためサンプル値（2026-04-28）"
+
+  - package_code: "RES-SAMPLE-7KW-BAT"
+    package_name: "住宅7kW＋蓄電池パッケージ（サンプル）"
+    pv_capacity_kw: 7.04
+    module:
+      maker: "シャープ"
+      model: "NU-220AF"
+      output_w: 220
+      panels: 32
+    pcs:
+      maker: "オムロン"
+      model: "KPBP-A"
+      capacity_kw: 5.9
+    battery:
+      included: true
+      maker: "オムロン"
+      model: "KP-BU65-A"
+      capacity_kwh: 6.5
+    base_price_jpy: 2800000
+    options:
+      - name: "全負荷型切替"
+        price_jpy: 150000
+      - name: "屋根工事追加"
+        price_jpy: 200000
+    notes: "実データ未到着のためサンプル値（2026-04-28）"

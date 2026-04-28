@@ -1,0 +1,156 @@
+# 太陽光モジュール・パワコン(PCS)メーカー辞書
+# 用途:
+#   - PDF/手書きOCR後のメーカー名・型式の正規化
+#   - 抽出値の妥当性チェック（住宅向け/産業向けの区分）
+#   - 型式プレフィックスからメーカーを推定する際の参照
+# 構造:
+#   - manufacturers: モジュールメーカー一覧
+#   - pcs_manufacturers: パワコン(PCS)メーカー一覧
+# 更新日: 2026-04-28
+
+manufacturers:
+  - name: "Canadian Solar"
+    aliases: ["カナディアンソーラー", "Canadian Solar Inc.", "CS"]
+    model_prefixes: ["CS", "CS3", "CS6", "CS7", "HiKu"]
+    segments: ["residential", "commercial"]
+    typical_outputs_w: [400, 410, 430, 460, 540, 620, 660, 670]
+
+  - name: "LONGi"
+    aliases: ["LONGi Solar", "Longi", "ロンジ"]
+    model_prefixes: ["LR", "LR4", "LR5", "LR6", "Hi-MO"]
+    segments: ["commercial"]
+    typical_outputs_w: [430, 450, 540, 580, 600, 660, 680]
+
+  - name: "Jinko"
+    aliases: ["Jinko Solar", "ジンコ", "ジンコソーラー", "JinkoSolar"]
+    model_prefixes: ["JKM", "Tiger", "Eagle"]
+    segments: ["commercial"]
+    typical_outputs_w: [400, 430, 450, 540, 580, 620]
+
+  - name: "Trina"
+    aliases: ["Trina Solar", "トリナ", "TrinaSolar"]
+    model_prefixes: ["TSM", "Vertex"]
+    segments: ["commercial"]
+    typical_outputs_w: [400, 430, 450, 500, 580, 660]
+
+  - name: "JA Solar"
+    aliases: ["JAソーラー", "JA Solar Co"]
+    model_prefixes: ["JAM", "JAM72", "JAM78"]
+    segments: ["commercial"]
+    typical_outputs_w: [430, 450, 540, 580, 620]
+
+  - name: "Q CELLS"
+    aliases: ["Hanwha Q CELLS", "ハンファQセルズ", "Qセルズ"]
+    model_prefixes: ["Q.PEAK", "Q.PRO", "Q.PLUS"]
+    segments: ["residential", "commercial"]
+    typical_outputs_w: [400, 410, 430, 450, 480]
+
+  - name: "シャープ"
+    aliases: ["Sharp", "SHARP", "シャープ太陽電池"]
+    model_prefixes: ["NU-", "NQ-", "ND-"]
+    segments: ["residential", "commercial"]
+    typical_outputs_w: [220, 250, 460, 540, 580]
+
+  - name: "パナソニック"
+    aliases: ["Panasonic", "Panasonic Corp"]
+    model_prefixes: ["VBHN", "HIT"]
+    segments: ["residential"]
+    typical_outputs_w: [240, 250, 320, 340, 410]
+
+  - name: "京セラ"
+    aliases: ["Kyocera", "KYOCERA"]
+    model_prefixes: ["KS", "KP"]
+    segments: ["residential"]
+    typical_outputs_w: [220, 240, 260]
+
+  - name: "三菱電機"
+    aliases: ["Mitsubishi Electric", "MITSUBISHI"]
+    model_prefixes: ["PV-MA"]
+    segments: ["residential"]
+    typical_outputs_w: [240, 270]
+
+  - name: "NextEnergy"
+    aliases: ["ネクストエナジー", "ネクストエナジー・アンド・リソース"]
+    model_prefixes: ["NER"]
+    segments: ["residential", "commercial"]
+    typical_outputs_w: [400, 460, 540]
+
+  - name: "SILFIN JAPAN"
+    aliases: ["シルフィンジャパン", "株式会社SILFIN JAPAN", "SILFIN"]
+    model_prefixes: ["SFJ"]
+    segments: ["commercial"]
+    typical_outputs_w: [400, 410, 540]
+
+# パワコン(PCS)メーカー一覧
+pcs_manufacturers:
+  - name: "オムロン"
+    aliases: ["Omron", "OMRON", "オムロンソーシアルソリューションズ"]
+    model_prefixes: ["KP", "KPV", "KPM", "KP-MU", "KPBP"]
+    segments: ["residential", "commercial"]
+    typical_capacity_kw: [4.0, 4.4, 4.95, 5.5, 5.9, 9.9, 10.0]
+
+  - name: "田淵電機"
+    aliases: ["Tabuchi", "TABUCHI", "ダイヤモンドエナジー", "ダイヤゼブラ電機"]
+    model_prefixes: ["EHF-", "EIBS", "EOF-"]
+    segments: ["residential", "commercial"]
+    typical_capacity_kw: [4.0, 4.4, 5.5, 5.9, 9.9, 10.0]
+
+  - name: "SMA"
+    aliases: ["SMA Solar Technology", "SMA Japan", "エスエムエー"]
+    model_prefixes: ["Sunny", "STP", "SB", "Tripower"]
+    segments: ["commercial"]
+    typical_capacity_kw: [10.0, 15.0, 25.0, 50.0, 60.0, 110.0]
+
+  - name: "Huawei"
+    aliases: ["ファーウェイ", "HUAWEI", "Huawei Technologies"]
+    model_prefixes: ["SUN2000"]
+    segments: ["residential", "commercial"]
+    typical_capacity_kw: [3.0, 5.0, 10.0, 17.0, 20.0, 36.0, 50.0, 100.0]
+
+  - name: "ダイヘン"
+    aliases: ["DAIHEN", "Daihen", "株式会社ダイヘン"]
+    model_prefixes: ["ET-", "PVS"]
+    segments: ["residential", "commercial"]
+    typical_capacity_kw: [4.0, 5.5, 9.9, 10.0, 25.0]
+
+  - name: "安川電機"
+    aliases: ["Yaskawa", "YASKAWA", "安川"]
+    model_prefixes: ["Enewell", "CEPT"]
+    segments: ["commercial"]
+    typical_capacity_kw: [10.0, 25.0, 50.0, 100.0]
+
+  - name: "三菱電機"
+    aliases: ["Mitsubishi Electric", "MITSUBISHI"]
+    model_prefixes: ["PV-PN", "PV-PS"]
+    segments: ["residential", "commercial"]
+    typical_capacity_kw: [4.0, 5.5, 9.9]
+
+  - name: "パナソニック"
+    aliases: ["Panasonic", "Panasonic Corp"]
+    model_prefixes: ["VBPC", "VBPM"]
+    segments: ["residential"]
+    typical_capacity_kw: [4.0, 5.5, 5.9]
+
+  - name: "シャープ"
+    aliases: ["Sharp", "SHARP"]
+    model_prefixes: ["JH-", "JH"]
+    segments: ["residential", "commercial"]
+    typical_capacity_kw: [4.0, 5.5, 9.9]
+
+  - name: "デルタ電子"
+    aliases: ["Delta", "DELTA", "Delta Electronics"]
+    model_prefixes: ["RPI", "M-TL"]
+    segments: ["commercial"]
+    typical_capacity_kw: [10.0, 25.0, 50.0]
+
+  - name: "GoodWe"
+    aliases: ["グッドウィ", "GOODWE"]
+    model_prefixes: ["GW", "DNS", "MS"]
+    segments: ["residential", "commercial"]
+    typical_capacity_kw: [5.0, 10.0, 25.0, 50.0]
+
+  - name: "Sungrow"
+    aliases: ["サングロウ", "SUNGROW"]
+    model_prefixes: ["SG", "SH"]
+    segments: ["commercial"]
+    typical_capacity_kw: [10.0, 25.0, 50.0, 110.0, 250.0]

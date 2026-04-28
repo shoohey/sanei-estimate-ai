@@ -1,0 +1,92 @@
+# 抽出値の妥当性チェック・典型値辞書
+# 用途:
+#   - PDF/手書きOCRで抽出した数値の妥当性検証
+#   - 範囲外の値を「要確認」としてフラグ付け
+#   - 典型値スナップ（OCR誤読を最も近い典型値に補正）
+#   - 単位の正規化（mm/cm/m → mm統一など）
+# 更新日: 2026-04-28
+
+module_output_w:
+  description: "モジュール定格出力(W/枚)の典型値"
+  values: [200, 210, 220, 240, 250, 260, 270, 320, 340, 400, 410, 430, 440, 450, 460, 480, 500, 540, 550, 580, 600, 620, 660, 670, 680, 700, 720]
+  snap_tolerance_w: 10  # ±10W以内なら最も近い典型値にスナップ
+
+planned_panels:
+  description: "設置予定枚数の典型範囲"
+  residential_range: [4, 30]
+  commercial_range: [50, 2000]
+
+pv_capacity_kw:
+  description: "PV総容量(kW)の典型範囲"
+  residential_range: [3.0, 9.99]
+  commercial_low_voltage_range: [10.0, 50.0]
+  commercial_high_voltage_range: [50.0, 2000.0]
+
+separation_mm:
+  description: "離隔距離の典型値"
+  typical_values_mm: [1500, 2000, 2500, 3000, 3500, 4000]
+  unit_aliases:
+    m: 1000
+    cm: 10
+    mm: 1
+
+ground_types:
+  description: "接地種類"
+  values: ["A", "C", "D"]
+  multi_select_allowed: true  # A種・D種の併用などあり
+
+design_status:
+  description: "設計ステータス"
+  values: ["確定", "仮", "未定"]
+  default: "未定"
+
+postal_code:
+  description: "郵便番号"
+  format: "XXX-XXXX"
+  digits: 7
+
+pcs_capacity_kw:
+  description: "PCS(パワコン)容量(kW)の典型値"
+  values: [4.0, 4.4, 4.95, 5.5, 5.9, 9.9, 10.0, 15.0, 17.0, 20.0, 25.0, 30.0, 40.0, 50.0, 55.0, 60.0, 100.0, 110.0, 250.0]
+  snap_tolerance_kw: 0.2  # ±0.2kW以内なら最も近い典型値にスナップ
+
+battery_capacity_kwh:
+  description: "蓄電池容量(kWh)の典型値"
+  residential_values: [4.2, 5.0, 6.5, 7.0, 9.8, 12.0, 12.8, 13.5, 16.4]
+  commercial_values: [16.4, 20.0, 30.0, 50.0, 100.0]
+
+voltage_class:
+  description: "受電電圧区分"
+  values: ["低圧", "高圧", "特別高圧"]
+  thresholds_kw:
+    low_voltage_max: 50.0      # 〜50kW未満は低圧
+    high_voltage_max: 2000.0    # 50〜2000kW未満は高圧
+    # 2000kW以上は特別高圧
+
+roof_types:
+  description: "屋根種類"
+  values: ["切妻", "寄棟", "片流れ", "陸屋根", "招き屋根", "方形", "M型", "折板", "瓦棒", "立平", "波板", "スレート", "ガルバリウム", "瓦"]
+
+mounting_types:
+  description: "架台種類"
+  values: ["屋根置き", "陸屋根置き", "野立て", "営農型", "水上", "屋上"]
+
+# 抽出時のスナップ・補正ルール
+snap_rules:
+  - field: "module_output_w"
+    rule: "values内で最も近い値に snap_tolerance_w 以内ならスナップ"
+  - field: "pcs_capacity_kw"
+    rule: "values内で最も近い値に snap_tolerance_kw 以内ならスナップ"
+  - field: "separation_mm"
+    rule: "単位が m/cm の場合は unit_aliases で mm に変換"
+  - field: "postal_code"
+    rule: "ハイフンなしの7桁を XXX-XXXX 形式に整形"
+
+# OCR誤読の補正パターン（よくある誤読）
+ocr_correction_patterns:
+  - pattern: "O→0"  # アルファベットO → 数字0
+    applies_to: ["module_output_w", "pcs_capacity_kw", "postal_code"]
+  - pattern: "l→1"  # 小文字エル → 数字1
+    applies_to: ["module_output_w", "planned_panels"]
+  - pattern: "全角→半角"
+    applies_to: ["postal_code", "module_output_w", "pcs_capacity_kw"]

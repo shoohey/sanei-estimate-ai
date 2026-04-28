@@ -1,4 +1,5 @@
-"""Claude Vision APIで現調シートの手書きOCR（複数文書タイプ対応）"""
+"""Claude Vision APIで現調シートの手書きOCR（複数文書タイプ対応・住宅/法人自動判別）"""
+import base64
 import json
 import re
 import time
@@ -10,6 +11,13 @@ from models.survey_data import (
     LocationType, BTPlacement, CInstallation, ConfidenceLevel,
 )
 from extraction.pdf_reader import pdf_to_images
+from extraction.prompts import (
+    COMMERCIAL_EXTRACTION_PROMPT,
+    RESIDENTIAL_EXTRACTION_PROMPT,
+)
+from extraction.image_preprocessor import auto_select_pipeline
+from extraction.self_consistency import merge_extractions
+from extraction.post_validators import validate_and_correct
 from config import get_api_key, CLAUDE_MODEL
 
 logger = logging.getLogger(__name__)
@@ -20,6 +28,11 @@ RETRY_DELAY_SEC = 2  # 初回待機秒（指数バックオフ）
 
 # ページ数上限（多すぎるとAPI制限に引っかかる）
 MAX_TOTAL_PAGES = 20
+
+# 自己一貫性パスのデフォルト設定（環境変数で切り替え可能）
+import os
+_SELF_CONSISTENCY_ENABLED = os.environ.get("SURVEY_SELF_CONSISTENCY", "0") == "1"
+_SELF_CONSISTENCY_TEMPS = [0.0, 0.2, 0.3]
 
 SURVEY_EXTRACTION_PROMPT = """あなたは太陽光発電設備の現地調査シート（現調シート）を読み取る専門家です。
 手書きの日本語を高精度で読み取ってください。
@@ -282,14 +295,23 @@ def extract_survey_data(pdf_path: str) -> SurveyData:
     return extract_survey_data_multi([pdf_path])
 
 
-def extract_survey_data_multi(pdf_paths: list[str]) -> SurveyData:
-    """複数PDFからデータを統合抽出
+def extract_survey_data_multi(
+    pdf_paths: list[str],
+    category: str | None = None,
+    use_image_enhancement: bool = True,
+    use_self_consistency: bool | None = None,
+) -> SurveyData:
+    """複数PDFからデータを統合抽出（v2.2 高精度版）
 
-    現調シート・配管図・単線結線図など複数種類の文書に対応。
-    リトライ機構付き。
+    住宅/法人を自動判別し、それぞれ専用プロンプトで抽出。
+    画像前処理（傾き補正・コントラスト強化）と後処理バリデーションで精度を最大化。
 
     Args:
         pdf_paths: PDFファイルパスのリスト
+        category: 'commercial' / 'residential' / None（Noneなら自動判別）
+        use_image_enhancement: 手書きOCR向け画像前処理を適用するか
+        use_self_consistency: 自己一貫性パス（複数回サンプリング多数決）。
+                              Noneの場合は環境変数 SURVEY_SELF_CONSISTENCY=1 で有効化
 
     Returns:
         SurveyData: 抽出された現調データ
@@ -297,7 +319,10 @@ def extract_survey_data_multi(pdf_paths: list[str]) -> SurveyData:
     Raises:
         RuntimeError: 全リトライ失敗時
     """
-    # 全PDFを画像に変換
+    if use_self_consistency is None:
+        use_self_consistency = _SELF_CONSISTENCY_ENABLED
+
+    # --- ステップ1: PDF→画像変換 ---
     all_pages = []
     for pdf_path in pdf_paths:
         try:
@@ -313,12 +338,38 @@ def extract_survey_data_multi(pdf_paths: list[str]) -> SurveyData:
     if not all_pages:
         raise RuntimeError("PDFからページを読み取れませんでした。ファイルが空でないか確認してください。")
 
-    # ページ数上限チェック
     if len(all_pages) > MAX_TOTAL_PAGES:
         logger.warning(f"ページ数が上限を超えています（{len(all_pages)}ページ）。先頭{MAX_TOTAL_PAGES}ページのみ処理します。")
         all_pages = all_pages[:MAX_TOTAL_PAGES]
 
-    # Claude Vision APIで読み取り（リトライ付き）
+    # --- ステップ2: 手書きOCR向け画像前処理（オプション） ---
+    if use_image_enhancement:
+        for p in all_pages:
+            try:
+                enhanced_bytes, media_type = auto_select_pipeline(p["image_bytes"])
+                p["image_bytes"] = enhanced_bytes
+                p["media_type"] = media_type
+                p["image_base64"] = base64.standard_b64encode(enhanced_bytes).decode("utf-8")
+            except Exception as e:
+                logger.warning(f"画像前処理失敗（元画像で続行）: {e}")
+
+    # --- ステップ3: 文書カテゴリ判定（住宅/法人） ---
+    if category is None:
+        try:
+            from extraction.document_classifier import classify_documents
+            cls = classify_documents(pdf_paths)
+            category = cls.get("category") or "commercial"
+            logger.info(f"文書分類: {category} (confidence={cls.get('confidence')}, evidence={cls.get('evidence')})")
+        except Exception as e:
+            logger.warning(f"文書分類失敗: {e}。法人(commercial)として処理します。")
+            category = "commercial"
+
+    if category not in ("commercial", "residential"):
+        category = "commercial"
+
+    # --- ステップ4: プロンプト選択 ---
+    prompt = COMMERCIAL_EXTRACTION_PROMPT if category == "commercial" else RESIDENTIAL_EXTRACTION_PROMPT
+
     content = []
     for page in all_pages:
         content.append({
@@ -329,21 +380,57 @@ def extract_survey_data_multi(pdf_paths: list[str]) -> SurveyData:
                 "data": page["image_base64"],
             }
         })
-
-    # 常に複数文書対応プロンプトを使用（配管図・単線結線図にも対応するため）
-    prompt = MULTI_DOC_EXTRACTION_PROMPT
-
     content.append({
         "type": "text",
         "text": prompt,
     })
 
+    # --- ステップ5: 抽出（自己一貫性パスの場合は複数回サンプリング） ---
     last_error = None
     last_error_kind = None  # JSONエラー / APIエラー / その他 を記録
+
+    # 自己一貫性パス: 複数回サンプリングして多数決
+    if use_self_consistency:
+        try:
+            results = []
+            for temp in _SELF_CONSISTENCY_TEMPS:
+                try:
+                    r = _call_claude_api(content, attempt=1, temperature=temp)
+                    results.append(r)
+                except Exception as e:
+                    logger.warning(f"self-consistency サンプル失敗 (temp={temp}): {e}")
+            if results:
+                merged, sc_confs = merge_extractions(results)
+                logger.info(f"self-consistency: {len(results)}サンプルから多数決")
+                # 後処理バリデーター適用
+                merged, validator_warnings, validator_confs = validate_and_correct(merged)
+                survey = _parse_raw_data(merged)
+                if validator_warnings:
+                    survey.extraction_warnings.extend(validator_warnings)
+                # 信頼度を統合（self-consistency と validator の "low" を優先）
+                for k, v in {**sc_confs, **validator_confs}.items():
+                    cur = survey.field_confidences.get(k)
+                    new_level = ConfidenceLevel(v) if isinstance(v, str) else v
+                    if cur is None or new_level == ConfidenceLevel.LOW:
+                        survey.field_confidences[k] = new_level
+                return survey
+        except Exception as e:
+            logger.warning(f"self-consistency失敗、単一パスにフォールバック: {e}")
+
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             raw_data = _call_claude_api(content, attempt)
+            # 後処理バリデーター適用
+            raw_data, validator_warnings, validator_confs = validate_and_correct(raw_data)
             survey = _parse_raw_data(raw_data)
+            if validator_warnings:
+                survey.extraction_warnings.extend(validator_warnings)
+            # 信頼度マージ（"low" は上書き優先）
+            for k, v in (validator_confs or {}).items():
+                new_level = ConfidenceLevel(v) if isinstance(v, str) else v
+                cur = survey.field_confidences.get(k)
+                if cur is None or new_level == ConfidenceLevel.LOW:
+                    survey.field_confidences[k] = new_level
             return survey
         except (json.JSONDecodeError, ValueError) as e:
             last_error = e
@@ -403,11 +490,12 @@ def extract_survey_data_multi(pdf_paths: list[str]) -> SurveyData:
     )
 
 
-def _call_claude_api(content: list[dict], attempt: int) -> dict:
+def _call_claude_api(content: list[dict], attempt: int, temperature: float = 0.0) -> dict:
     """Claude Vision APIを呼び出してJSONレスポンスを返す
 
     改善点:
-    - temperature=0 で決定論的な出力を得る（手書きOCRで結果の再現性を確保）
+    - 既定 temperature=0 で決定論的な出力を得る（手書きOCRで結果の再現性を確保）
+    - 自己一貫性パス時のみ temperature を上げて多様性を出す
     - assistant の最初のメッセージに "{" をプリフィルすることで、
       モデルが余計な前置き（「以下がJSONです:」など）を出さず、純粋なJSONのみを返すよう誘導する
     """
@@ -416,7 +504,7 @@ def _call_claude_api(content: list[dict], attempt: int) -> dict:
     response = client.messages.create(
         model=CLAUDE_MODEL,
         max_tokens=8192,
-        temperature=0,  # 決定論的な出力のため 0 に設定
+        temperature=temperature,
         messages=[
             {
                 "role": "user",
