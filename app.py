@@ -10,7 +10,9 @@ from models.survey_data import (
     SupplementarySheet, FinalConfirmation, DesignStatus, GroundType,
     LocationType, BTPlacement, CInstallation, ConfidenceLevel,
 )
-from models.estimate_data import EstimateData, CategoryType
+from models.estimate_data import (
+    EstimateData, CategoryType, LineItem, LineItemReasoning, PricingMethod,
+)
 from extraction.pdf_reader import pdf_to_images
 from extraction.survey_extractor import extract_survey_data, extract_survey_data_multi
 from extraction.survey_validator import validate_survey_data
@@ -32,6 +34,7 @@ from product.product_registry import (
     load_registry, add_product, find_by_model,
     get_active_module_for_estimate, delete_product,
 )
+from product import price_master as pm
 
 # ページ設定
 st.set_page_config(
@@ -1714,6 +1717,259 @@ def _render_product_info_section(estimate: EstimateData):
                             st.rerun()
 
 
+def _add_master_item_to_estimate(
+    estimate: EstimateData,
+    product: dict,
+    category_type: CategoryType,
+    quantity: float,
+    unit: str,
+    unit_price: int,
+) -> bool:
+    """単価マスターの製品を見積の指定カテゴリに明細追加する。
+
+    既存の値引き(discount)は維持したまま小計・税を再計算する。
+    値引きは万円単位で丸めている場合があるため、追加後は「💰 値引き調整」で
+    再調整を促す（呼び出し側でメッセージ表示）。
+    """
+    section = next(
+        (c for c in estimate.summary.categories if c.category == category_type), None
+    )
+    if section is None:
+        return False
+
+    qty = float(quantity)
+    up = int(unit_price)
+    amount = int(round(up * qty))
+    next_no = max([it.no for it in section.items], default=0) + 1
+
+    desc = (
+        product.get("name")
+        or product.get("model")
+        or product.get("product_code")
+        or "部材"
+    )
+    spec_bits = [product.get("maker"), product.get("model"), product.get("product_code")]
+    remarks = " / ".join([b for b in spec_bits if b])
+    warranty = product.get("warranty_text") or ""
+    if warranty and warranty not in remarks:
+        remarks = f"{remarks} / {warranty}" if remarks else warranty
+
+    unit = (unit or "").strip()
+    qty_disp = f"{qty:g}".rstrip(".")
+    quantity_str = f"{qty_disp}{unit}" if unit else qty_disp
+
+    src = pm.get_meta().get("source", "単価マスター")
+    item = LineItem(
+        no=next_no,
+        description=desc,
+        remarks=remarks,
+        quantity=quantity_str,
+        quantity_value=qty,
+        quantity_unit=unit,
+        unit_price=up,
+        amount=amount,
+        reasoning=LineItemReasoning(
+            method=PricingMethod.FIXED,
+            formula=f"{quantity_str} × ¥{up:,} = ¥{amount:,}",
+            source=f"単価マスター（{src}）",
+            note=f"商品コード {product.get('product_code', '')}".strip(),
+        ),
+    )
+    section.items.append(item)
+    section.calculate_totals()
+    estimate.summary.calculate_totals()
+    estimate.cover.total_before_tax = estimate.summary.total_before_tax
+    estimate.cover.tax = estimate.summary.tax
+    estimate.cover.total_with_tax = estimate.summary.total_with_tax
+    return True
+
+
+def _render_price_master_section(estimate: EstimateData):
+    """産業用部材 単価マスター（価格表）の閲覧・検索・見積への明細追加"""
+    meta = pm.get_meta()
+    if meta.get("product_count", 0) == 0:
+        return  # マスター未登録時はセクションを表示しない
+
+    with st.expander(
+        f"📋 産業用部材 単価マスター（{meta['product_count']}点）", expanded=False
+    ):
+        tax_label = "税込" if meta.get("tax_included") else "税抜"
+        st.caption(
+            f"出典: {meta['source']}（{meta['source_date']}・単価は{tax_label}） / "
+            f"メーカー{meta['maker_count']}社・{meta['category_count']}カテゴリ"
+        )
+
+        # --- 絞り込みUI ---
+        c1, c2 = st.columns(2)
+        with c1:
+            category = st.selectbox(
+                "カテゴリ", ["（すべて）"] + pm.get_categories(), key="pm_cat"
+            )
+        with c2:
+            maker = st.selectbox(
+                "メーカー", ["（すべて）"] + pm.get_makers(), key="pm_maker"
+            )
+        query = st.text_input(
+            "キーワード検索（型番・品名・商品コード）",
+            key="pm_q",
+            placeholder="例: 4.95kW ／ KPW-A55 ／ 100m ／ カーポート 8台",
+        )
+        oc1, oc2 = st.columns(2)
+        with oc1:
+            canonical_only = st.checkbox(
+                "重複は代表価格のみ", value=True, key="pm_canon",
+                help="オムロン自家消費用途のPCSはPDF上で価格が2系統重複しています。"
+                     "ONで代表（最新ページ）価格のみ表示します。",
+            )
+        with oc2:
+            hide_warranty = st.checkbox(
+                "延長保証行を隠す", value=False, key="pm_hidew"
+            )
+
+        results = pm.search(
+            query=query,
+            category="" if category == "（すべて）" else category,
+            maker="" if maker == "（すべて）" else maker,
+            canonical_only=canonical_only,
+        )
+        if hide_warranty:
+            results = [r for r in results if r.get("item_kind") != "warranty_extension"]
+
+        # 重複（オムロン自家消費）注意喚起
+        has_superseded = any(
+            r.get("is_duplicate") and not r.get("is_canonical", True) for r in results
+        )
+        has_canonical_dup = any(
+            r.get("is_duplicate") and r.get("is_canonical", True) for r in results
+        )
+        if has_superseded:
+            st.warning(
+                "⚠️ 同一商品コードに**複数の単価**が併記されています（オムロン自家消費用途等）。"
+                "正価格はサンエー様にご確認ください。"
+            )
+        elif has_canonical_dup:
+            st.info(
+                "ℹ️ 表示中の一部部材は価格表上に別系統の価格も存在します（代表価格を表示中）。"
+                "「重複は代表価格のみ」をOFFにすると全価格を比較できます。"
+            )
+
+        st.caption(f"🔎 {len(results)}件ヒット")
+
+        # --- 一覧（テーブル表示・単価は数値列でソート可能）---
+        MAX_ROWS = 300
+        view = []
+        for r in results[:MAX_ROWS]:
+            note = r.get("unit_price_note", "")
+            remarks = r.get("remarks", "")
+            # 単価が空（別途見積等）の場合は注記を備考に前置きして情報を残す
+            if r.get("unit_price") is None and note:
+                remarks = f"［{note}］ {remarks}".strip()
+            view.append({
+                "カテゴリ": r.get("category", ""),
+                "メーカー": r.get("maker", ""),
+                "商品コード": r.get("product_code", ""),
+                "型番": r.get("model", ""),
+                "品名": r.get("name", ""),
+                "単価(税抜)": r.get("unit_price"),  # int or None（数値列）
+                "備考": remarks,
+            })
+        if view:
+            try:
+                price_col = st.column_config.NumberColumn("単価(税抜)", format="¥%d")
+                st.dataframe(
+                    view, use_container_width=True, hide_index=True, height=340,
+                    column_config={"単価(税抜)": price_col},
+                )
+            except Exception:
+                # 古いStreamlitでcolumn_config非対応の場合はそのまま表示
+                st.dataframe(view, use_container_width=True, hide_index=True, height=340)
+        else:
+            st.info("条件に一致する部材がありません。キーワードや絞り込みを変えてください。")
+        if len(results) > MAX_ROWS:
+            st.caption(f"※ 先頭{MAX_ROWS}件のみ表示（全{len(results)}件）。キーワードで絞り込んでください。")
+
+        # --- 見積へ明細追加 ---
+        cat_options = [
+            c.category for c in estimate.summary.categories
+            if c.category != CategoryType.SPECIAL_NOTES
+        ] if estimate is not None else []
+        if results and estimate is not None and cat_options:
+            st.divider()
+            st.markdown("**➕ 選択した部材を見積に明細追加**")
+            options = results[:MAX_ROWS]
+            labels = [pm.product_label(r) for r in options]
+            sel_idx = st.selectbox(
+                "追加する部材を選択",
+                range(len(options)),
+                format_func=lambda i: labels[i],
+                key="pm_add_sel",
+            )
+            sel = options[sel_idx]
+
+            # 既定の追加先: サービス/保証 → その他・諸経費等、それ以外 → 材料費
+            kind = sel.get("item_kind")
+            default_cat = (
+                CategoryType.OVERHEAD if kind in ("service", "warranty_extension")
+                else CategoryType.MATERIAL
+            )
+            default_idx = cat_options.index(default_cat) if default_cat in cat_options else 0
+
+            ac1, ac2, ac3 = st.columns([1, 1, 1.6])
+            with ac1:
+                qty = st.number_input(
+                    "数量", min_value=0.0, value=1.0, step=1.0, key="pm_add_qty"
+                )
+            with ac2:
+                unit = st.text_input("単位", value="式", key="pm_add_unit")
+            with ac3:
+                target_cat = st.selectbox(
+                    "追加先カテゴリ",
+                    cat_options,
+                    index=default_idx,
+                    format_func=lambda c: c.value,
+                    key="pm_add_cat",
+                )
+            base_price = sel.get("unit_price")
+            # keyに選択製品IDを含めることで、部材を切り替えた際に単価欄が
+            # 選択中部材の既定価格へ正しく更新される（固定keyだと前の値が残る）。
+            price = st.number_input(
+                "単価（編集可・税抜）",
+                min_value=0,
+                value=int(base_price) if isinstance(base_price, (int, float)) else 0,
+                step=1000,
+                key=f"pm_add_price_{sel.get('id', sel_idx)}",
+                help="「別途問合せ」等で単価が空の部材は0で追加されます。手入力してください。",
+            )
+            if meta.get("tax_included"):
+                st.caption("⚠️ この価格表は税込です。見積は税抜で集計されるため、税抜換算してから追加してください。")
+            preview_amount = int(round(price * qty))
+            st.caption(
+                f"追加プレビュー: **{sel.get('name', '')}** … "
+                f"{qty:g}{unit} × ¥{price:,} = **¥{preview_amount:,}** → "
+                f"「{target_cat.value}」へ"
+            )
+            if st.button("✅ この内容で明細を追加", type="primary", key="pm_add_btn"):
+                ok = _add_master_item_to_estimate(
+                    estimate, sel, target_cat, qty, unit, price
+                )
+                if ok:
+                    st.session_state.estimate_data = estimate
+                    msg = f"「{sel.get('name', '')}」を{target_cat.value}に追加しました（¥{preview_amount:,}）。"
+                    if estimate.summary.discount != 0:
+                        msg += "値引きが設定済みのため、必要に応じて「💰 値引き調整」で再設定してください。"
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error("追加先カテゴリが見つかりませんでした。")
+
+        # --- 取引条件（PDFフッター）---
+        conditions = pm.get_conditions()
+        if conditions:
+            with st.expander("📑 取引条件（価格表フッター）", expanded=False):
+                for c in conditions:
+                    st.markdown(f"- {c}")
+
+
 def _render_roof_layout_section(estimate: EstimateData):
     """屋根レイアウト図セクション"""
     survey: SurveyData | None = st.session_state.get("survey_data")
@@ -1858,6 +2114,7 @@ def _render_step3_estimate():
     # v2.3 新機能セクション
     _render_voice_edit_section(estimate)
     _render_product_info_section(estimate)
+    _render_price_master_section(estimate)
     _render_roof_layout_section(estimate)
 
     # 値引き調整
