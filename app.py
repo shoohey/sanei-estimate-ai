@@ -36,6 +36,9 @@ from product.product_registry import (
 )
 from product import price_master as pm
 
+# 簡易製図AI（別系統モード。エンジンは各ハンドラ内で遅延import）
+from drafting import app_pages as drafting_pages
+
 # ページ設定
 st.set_page_config(
     page_title="見積作成AI - 株式会社サンエー",
@@ -493,7 +496,7 @@ def main():
                 <h1>☀️ 太陽光発電設備 見積作成AI</h1>
                 <p>株式会社サンエー｜現調データから見積書を自動生成</p>
             </div>
-            <div style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);border-radius:8px;padding:4px 12px;font-size:0.75rem;color:rgba(255,255,255,0.85);font-weight:600;letter-spacing:0.05em;">v2.3</div>
+            <div style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);border-radius:8px;padding:4px 12px;font-size:0.75rem;color:rgba(255,255,255,0.85);font-weight:600;letter-spacing:0.05em;">v2.5</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -506,7 +509,17 @@ def main():
 
     # 各ステップ
     step = st.session_state.step
-    if step == 0:
+    if st.session_state.input_mode == "drafting":
+        # 簡易製図AI（別系統フロー: 1=アップロード, 2=確認, 3=プレビュー）
+        if step == 0:
+            _render_step0_mode_select()
+        elif step == 1:
+            drafting_pages.render_step1_upload()
+        elif step == 2:
+            drafting_pages.render_step2_confirm()
+        else:
+            drafting_pages.render_step3_result()
+    elif step == 0:
         _render_step0_mode_select()
     elif step == 1:
         if st.session_state.input_mode == "direct":
@@ -549,6 +562,8 @@ def _render_step_indicator():
         steps = ["入力方法", "現調データ入力", "確認", "見積プレビュー", "ダウンロード"]
     elif st.session_state.input_mode == "pdf":
         steps = ["入力方法", "PDF読み取り", "確認・修正", "見積プレビュー", "ダウンロード"]
+    elif st.session_state.input_mode == "drafting":
+        steps = drafting_pages.drafting_step_names()
     else:
         steps = ["入力方法", "データ入力", "確認", "見積プレビュー", "ダウンロード"]
 
@@ -576,7 +591,7 @@ def _render_step0_mode_select():
     st.markdown('<p style="text-align:center;font-size:1.1rem;color:#475569;font-weight:500;">入力方法を選択してください</p>', unsafe_allow_html=True)
     st.markdown("")
 
-    col_sp1, col1, col_gap, col2, col_sp2 = st.columns([0.5, 2, 0.3, 2, 0.5])
+    col1, col_gap1, col2, col_gap2, col3 = st.columns([2, 0.3, 2, 0.3, 2])
 
     with col1:
         st.markdown("""
@@ -617,6 +632,9 @@ def _render_step0_mode_select():
             st.session_state.input_mode = "pdf"
             st.session_state.step = 1
             st.rerun()
+
+    with col3:
+        drafting_pages.render_mode_card()
 
 
 # =============================================================
