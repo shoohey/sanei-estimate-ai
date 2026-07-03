@@ -93,13 +93,11 @@ def parse_voice_command(text: str, estimate: EstimateData) -> list[dict]:
             temperature=TEMPERATURE,
             messages=[
                 {"role": "user", "content": prompt},
-                # Prefill "[" で配列のみを返すよう誘導
-                {"role": "assistant", "content": "["},
+                # Sonnet 4.6 以降は assistant プリフィルが 400 になるため使用しない。
+                # 前置き混じりの応答は _extract_json_array 側で除去する。
             ],
         )
         raw_text = response.content[0].text
-        if not raw_text.lstrip().startswith("["):
-            raw_text = "[" + raw_text
 
         json_str = _extract_json_array(raw_text)
         commands = json.loads(json_str)

@@ -339,9 +339,8 @@ def _call_claude_api(content: list[dict], system_prompt: str, attempt: int,
                      temperature: float = 0.0) -> dict:
     """Claude Vision API を呼び出して JSON dict を返す。
 
-    survey_extractor._call_claude_api と同じく assistant を "{" でプリフィルし、
-    余計な前置きを排除して純粋な JSON を得る。JSON 抽出は survey_extractor の
-    _extract_json を流用する。
+    前置きやコードフェンス混じりの応答は survey_extractor の _extract_json で
+    除去する（Sonnet 4.6 以降は assistant プリフィルが 400 になるため使用しない）。
 
     Raises:
         各種 anthropic 例外 / json.JSONDecodeError / ValueError（呼び出し側でリトライ判定）
@@ -359,12 +358,9 @@ def _call_claude_api(content: list[dict], system_prompt: str, attempt: int,
         system=system_prompt,
         messages=[
             {"role": "user", "content": content},
-            {"role": "assistant", "content": "{"},  # プリフィルで JSON のみを誘導
         ],
     )
     response_text = response.content[0].text
-    if not response_text.lstrip().startswith("{"):
-        response_text = "{" + response_text
     logger.info(f"Vision応答（試行{attempt}）: {response_text[:200]}...")
     json_str = _extract_json(response_text)
     return json.loads(json_str)

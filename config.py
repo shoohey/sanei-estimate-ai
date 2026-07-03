@@ -20,7 +20,7 @@ def get_api_key() -> str:
     # 2. 環境変数 / .env
     return os.getenv("ANTHROPIC_API_KEY", "")
 
-CLAUDE_MODEL = "claude-sonnet-4-20250514"
+CLAUDE_MODEL = "claude-sonnet-4-6"
 
 # パス定数
 ASSETS_DIR = BASE_DIR / "assets"

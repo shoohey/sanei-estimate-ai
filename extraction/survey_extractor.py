@@ -496,8 +496,8 @@ def _call_claude_api(content: list[dict], attempt: int, temperature: float = 0.0
     改善点:
     - 既定 temperature=0 で決定論的な出力を得る（手書きOCRで結果の再現性を確保）
     - 自己一貫性パス時のみ temperature を上げて多様性を出す
-    - assistant の最初のメッセージに "{" をプリフィルすることで、
-      モデルが余計な前置き（「以下がJSONです:」など）を出さず、純粋なJSONのみを返すよう誘導する
+    - 前置きやコードフェンス混じりの応答は _extract_json 側で除去する
+      （Sonnet 4.6 以降は assistant プリフィルが 400 になるため使用しない）
     """
     client = anthropic.Anthropic(api_key=get_api_key())
 
@@ -510,20 +510,11 @@ def _call_claude_api(content: list[dict], attempt: int, temperature: float = 0.0
                 "role": "user",
                 "content": content,
             },
-            {
-                # Prefill: assistant の応答を "{" から開始させることで
-                # JSON以外の余計な文字列（前置き・マークダウン等）を排除する
-                "role": "assistant",
-                "content": "{",
-            },
         ],
     )
 
     # レスポンスからJSONを抽出
-    # Prefill の "{" はレスポンスには含まれないため、手動で先頭に付与する
     response_text = response.content[0].text
-    if not response_text.lstrip().startswith("{"):
-        response_text = "{" + response_text
     logger.info(f"API応答（試行{attempt}）: {response_text[:200]}...")
     json_str = _extract_json(response_text)
     raw_data = json.loads(json_str)

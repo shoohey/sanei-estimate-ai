@@ -180,7 +180,7 @@ def classify_documents(pdf_paths: list[str]) -> dict:
 
 
 def _call_classify_api(content: list[dict], attempt: int) -> dict:
-    """Claude Vision APIで分類を実行（temperature=0、prefill="{"）"""
+    """Claude Vision APIで分類を実行（temperature=0）"""
     client = anthropic.Anthropic(api_key=get_api_key())
 
     response = client.messages.create(
@@ -189,13 +189,10 @@ def _call_classify_api(content: list[dict], attempt: int) -> dict:
         temperature=0,
         messages=[
             {"role": "user", "content": content},
-            {"role": "assistant", "content": "{"},
         ],
     )
 
     response_text = response.content[0].text
-    if not response_text.lstrip().startswith("{"):
-        response_text = "{" + response_text
     logger.info(f"分類API応答(試行{attempt}): {response_text[:200]}...")
     json_str = _extract_json_block(response_text)
     return json.loads(json_str)

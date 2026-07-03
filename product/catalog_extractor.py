@@ -279,7 +279,8 @@ def extract_catalog_thumbnail(
 def _call_claude_api(content: list[dict], attempt: int) -> dict:
     """Claude Vision API を呼び出してJSONレスポンスを返す。
 
-    survey_extractor と同様に prefill "{" を使い、純粋なJSONのみを得る。
+    前置きやコードフェンス混じりの応答は _extract_json で除去する
+    （Sonnet 4.6 以降は assistant プリフィルが 400 になるため使用しない）。
     """
     client = anthropic.Anthropic(api_key=get_api_key())
     response = client.messages.create(
@@ -288,12 +289,9 @@ def _call_claude_api(content: list[dict], attempt: int) -> dict:
         temperature=0.0,
         messages=[
             {"role": "user", "content": content},
-            {"role": "assistant", "content": "{"},
         ],
     )
     response_text = response.content[0].text
-    if not response_text.lstrip().startswith("{"):
-        response_text = "{" + response_text
     logger.info(f"カタログAPI応答（試行{attempt}）: {response_text[:200]}...")
     json_str = _extract_json(response_text)
     return json.loads(json_str)
