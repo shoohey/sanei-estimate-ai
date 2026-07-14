@@ -314,9 +314,12 @@ def render_step2_confirm():
                     index=list(Orientation.ALL).index(face.get("orientation")) if face.get("orientation") in Orientation.ALL else 2,
                     format_func=lambda x: Orientation.LABEL.get(x, x), key=f"df_forient_{i}")
             with f3:
-                face["target_panel_count"] = st.number_input(
-                    "設置枚数", value=int(face.get("target_panel_count") or 0),
-                    min_value=0, step=1, key=f"df_fcount_{i}")
+                _cnt = st.number_input(
+                    "設置枚数（0=最大枚数を自動配置）",
+                    value=int(face.get("target_panel_count") or 0),
+                    min_value=0, step=1, key=f"df_fcount_{i}",
+                    help="0 のままにすると、屋根面に収まる最大枚数を自動で配置します。")
+                face["target_panel_count"] = int(_cnt) or None
                 face["margin_mm"] = st.number_input("離隔マージン (mm)", value=float(face.get("margin_mm", 500) or 0),
                                                    min_value=0.0, step=50.0, key=f"df_fmargin_{i}")
 
@@ -401,12 +404,19 @@ def render_step2_confirm():
 
 
 def _generate_drawing(d: dict):
-    """dict → DraftingSpec → place_panels → render_drawing → step3。"""
+    """dict → DraftingSpec → 学習ルール適用 → place_panels → render_drawing → step3。"""
+    learned_notes = []
     with st.spinner("製図を生成しています..."):
         try:
             from drafting.layout_engine import place_panels
             from drafting.drawing_renderer import render_drawing
             spec = spec_from_dict(d)
+            # 学習済み図面ルールの適用（既定値のみ上書き。失敗しても製図は続行）
+            try:
+                from learning.apply_drawing import apply_learned_drawing_rules
+                spec, learned_notes = apply_learned_drawing_rules(spec)
+            except Exception:
+                learned_notes = []
             spec = place_panels(spec)
             out = render_drawing(spec)
         except Exception as e:
@@ -415,6 +425,13 @@ def _generate_drawing(d: dict):
     st.session_state.drafting_png = out.get("png_bytes")
     st.session_state.drafting_pdf = out.get("pdf_bytes")
     st.session_state.drafting_spec_dict = spec_to_dict(spec)  # 配置・集計反映後
+    st.session_state.drafting_learning_notes = learned_notes  # step3 で表示する
+    # 学習の材料として図面履歴を自動保存（失敗しても本体フローは止めない）
+    try:
+        from learning.history import save_drawing_history
+        save_drawing_history(spec_to_dict(spec))
+    except Exception:
+        pass
     st.session_state.step = 3
     st.rerun()
 
@@ -444,6 +461,11 @@ def render_step3_result():
         f"**{d.get('customer_name','')}** ｜ {DrawingType.LABEL.get(dtype, dtype)} ｜ "
         f"{d.get('total_panels',0)}枚 / {d.get('total_kw',0)}kW ｜ {d.get('paper','A4')}横"
     )
+
+    # 生成時に適用された学習済みルール（st.rerun 後もここで見える）
+    learned_notes = st.session_state.get("drafting_learning_notes") or []
+    if learned_notes:
+        st.caption("🧠 学習済みルール適用: " + " / ".join(learned_notes))
 
     st.image(png, use_container_width=True)
 

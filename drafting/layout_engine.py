@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from typing import List, Optional, Tuple
 
 from drafting.models import (
@@ -236,11 +237,46 @@ def _place_polygon_one(
     return rows, cols, rects
 
 
+def _apply_roof_type_defaults(face: RoofFace, panel: PanelSpec) -> PanelSpec:
+    """屋根種別ごとの離隔既定値（knowledge/layout_defaults.yaml）を適用する。
+
+    枚数未指定（target_panel_count が None/0 = 最大枚数の自動算出）の面に
+    限って適用する。枚数指定がある面は実設計に基づく図面のため、
+    実測由来の離隔（既定値と同値のこともある）を上書きしない。
+    さらにフォーム・AI抽出・学習ルールで明示された値を尊重し、標準既定値
+    （行間25 / 列間10 / マージン500）のままの項目だけ差し替える。
+    face.margin_mm は in-place 更新、パネル隙間は差し替え済みコピーを返す。
+    """
+    if face.target_panel_count and face.target_panel_count > 0:
+        return panel  # 枚数指定あり = 実設計の再現 → 離隔は触らない
+    try:
+        from drafting.layout_defaults import roof_type_defaults
+        d = roof_type_defaults(face.roof_type)
+    except Exception:
+        return panel
+    if not d:
+        return panel
+    try:
+        if face.margin_mm == 500.0 and d.get("margin_mm") is not None:
+            face.margin_mm = float(d["margin_mm"])
+        gl, gs = panel.gap_long_mm, panel.gap_short_mm
+        if gl == 25.0 and d.get("gap_long_mm") is not None:
+            gl = float(d["gap_long_mm"])
+        if gs == 10.0 and d.get("gap_short_mm") is not None:
+            gs = float(d["gap_short_mm"])
+        if (gl, gs) == (panel.gap_long_mm, panel.gap_short_mm):
+            return panel
+        return replace(panel, gap_long_mm=gl, gap_short_mm=gs)
+    except Exception:
+        return panel
+
+
 def _layout_face(face: RoofFace, panel: PanelSpec) -> None:
     """1 屋根面に対してパネルを配置し、face を in-place で更新する。
 
     - orientation=AUTO は portrait/landscape を両方計算して枚数の多い方を採用。
     - target_panel_count があれば上限として末尾から間引く（行優先で前から残す）。
+      None/0/負値は「枚数未指定」= 収まる最大枚数をそのまま採用。
     """
     shape = (face.shape or "rectangle").lower()
 
@@ -264,9 +300,9 @@ def _layout_face(face: RoofFace, panel: PanelSpec) -> None:
 
     # target 上限で間引く（行優先＝走査順で前から残し、末尾を切る）
     target = face.target_panel_count
-    if target is not None and target < 0:
-        target = 0  # 負値は不正データ → 0 枚扱い（全数残しではなく明示的に空に）
-    if target is not None and target >= 0 and len(rects) > target:
+    if target is not None and target <= 0:
+        target = None  # 0/負値 = 枚数未指定 → 最大枚数を自動配置
+    if target is not None and len(rects) > target:
         rects = rects[:target]
         # 間引き後は最終行が不完全になり得る。cols は維持し、
         # rows は「実枚数 ÷ cols の切り上げ」で再導出する（端数行を含む実段数）。
@@ -394,11 +430,14 @@ def place_panels(spec: DraftingSpec) -> DraftingSpec:
     panel = spec.panel or PanelSpec()
     faces = spec.roof_faces or []
 
+    effective_panels = []  # 各面で実際に使った隙間（凡例表示との整合用）
     for face in faces:
         if face is None:
             continue
         try:
-            _layout_face(face, panel)
+            eff_panel = _apply_roof_type_defaults(face, panel)
+            effective_panels.append(eff_panel)
+            _layout_face(face, eff_panel)
         except Exception as exc:  # 1 面の失敗で全体を止めない
             # 当該面は空配置として続行し、所見に残す
             face.panels = []
@@ -411,6 +450,18 @@ def place_panels(spec: DraftingSpec) -> DraftingSpec:
                 )
             except Exception:
                 pass
+
+    # 屋根種別既定値で隙間を差し替えた場合、全面が同一値なら spec.panel にも
+    # 反映する（drawing_renderer の間隔注記・凡例が実配置値と食い違わないように）
+    try:
+        gaps = {(p.gap_long_mm, p.gap_short_mm) for p in effective_panels}
+        if len(gaps) == 1:
+            gl, gs = gaps.pop()
+            if (gl, gs) != (panel.gap_long_mm, panel.gap_short_mm):
+                spec.panel.gap_long_mm = gl
+                spec.panel.gap_short_mm = gs
+    except Exception:
+        pass
 
     # ストリング割当（strings が空なら no-op）
     try:

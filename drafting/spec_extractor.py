@@ -216,6 +216,35 @@ def _golden_example_json(name: str) -> str:
     return json.dumps(d, ensure_ascii=False, indent=2)
 
 
+def _learned_examples_block() -> str:
+    """学習センターで承認された実案件の正解 spec を few-shot 追記ブロックにする。
+
+    learning ストアが無い/壊れている場合は空文字を返し、従来プロンプトのまま動く
+    （学習系の失敗で抽出フローを止めない）。プロンプト肥大防止のため2件まで。
+    """
+    try:
+        from learning.apply_drawing import learned_golden_examples
+        blocks = []
+        for i, ex in enumerate(learned_golden_examples(2), start=1):
+            spec_d = ex.get("spec") if isinstance(ex, dict) else None
+            if not isinstance(spec_d, dict):
+                continue
+            # deepcopy 相当（元の学習ストア payload を汚さない）+ 座標 panels を落として軽量化
+            d = json.loads(json.dumps(spec_d, ensure_ascii=False))
+            for face in d.get("roof_faces", []) or []:
+                if isinstance(face, dict):
+                    face["panels"] = []
+            name = ex.get("name") or f"学習例{i}"
+            blocks.append(
+                f"\n【実案件の学習済みお手本{i}（{name}。過去に人が確認した正解）】\n"
+                "```json\n" + json.dumps(d, ensure_ascii=False, indent=2) + "\n```\n"
+            )
+        return "".join(blocks)
+    except Exception as e:
+        logger.debug(f"学習済みお手本の注入をスキップ: {e}")
+        return ""
+
+
 def build_system_prompt() -> str:
     """システムプロンプト（抽出専門家のロール定義）を生成する。"""
     return (
@@ -252,6 +281,7 @@ def build_user_prompt(drawing_type: str = DrawingType.LAYOUT, hint: str = "") ->
 
     example_kurihara = _golden_example_json("kurihara_layout")
     example_tok = _golden_example_json("tok_string")
+    learned_block = _learned_examples_block()  # 学習済みお手本（無ければ空）
 
     hint_block = ""
     if hint and hint.strip():
@@ -268,10 +298,15 @@ def build_user_prompt(drawing_type: str = DrawingType.LAYOUT, hint: str = "") ->
 2. モジュール（パネル）: メーカー・型番・1枚出力W・長辺mm・短辺mm（panel）
 3. 屋根面ごとに:
    - 名称（複数面なら「面1」「面2」…）
-   - 屋根種別（瓦/折板/陸屋根/スレート）
+   - 屋根種別（瓦/折板/陸屋根/スレート）。「陸屋根」「屋上」「RC屋上」→ rikuyane、
+     「折板」「金属屋根」→ setsuban、傾斜屋根は屋根材の記載から判定
+     （瓦→kawara、スレート/コロニアル/カラーベスト→slate）
    - 形状（矩形 rectangle / 多角形 polygon）と寸法 幅mm・奥行mm（多角形なら頂点列 polygon_mm）
-   - その面の設置枚数（target_panel_count）
+   - その面の設置枚数（target_panel_count。資料に枚数の記載が無ければ null —
+     その場合は屋根面に収まる最大枚数を自動配置する。推定枚数を入れないこと）
    - パネルの向き（縦置き portrait / 横置き landscape）
+   - 屋根端・軒・ケラバからの離隔の記載（例「離隔500」「端部より500逃げ」）があれば
+     margin_mm へ。アレイ間・段間の間隔の記載があれば panel.gap_long_mm（行間）へ
 4. 架台種別（mount_type）
 5. PCS（パワコン）の型番・台数（pcs_model, pcs_count）
 6. ストリング系統（◯直×◯並。例「12直×5並」）→ strings（PCSごと）
@@ -309,8 +344,8 @@ drafting/models.py の DraftingSpec の dict 構造に厳密準拠した JSON �
 ```json
 {example_tok}
 ```
-
-上記2例と同じキー構造で、今回の画像から読み取った JSON を返してください。
+{learned_block}
+上記の例と同じキー構造で、今回の画像から読み取った JSON を返してください。
 panels（座標）は空配列 [] のままで構いません（配置計算は別工程で行います）。
 JSON 以外のテキストは一切出力しないでください。"""
 

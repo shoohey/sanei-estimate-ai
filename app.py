@@ -39,6 +39,9 @@ from product import price_master as pm
 # 簡易製図AI（別系統モード。エンジンは各ハンドラ内で遅延import）
 from drafting import app_pages as drafting_pages
 
+# 学習センター（v2.6 差分学習ループ。パーサー等は各ハンドラ内で遅延import）
+from learning import app_pages as learning_pages
+
 # ページ設定
 st.set_page_config(
     page_title="見積作成AI - 株式会社サンエー",
@@ -496,7 +499,7 @@ def main():
                 <h1>☀️ 太陽光発電設備 見積作成AI</h1>
                 <p>株式会社サンエー｜現調データから見積書を自動生成</p>
             </div>
-            <div style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);border-radius:8px;padding:4px 12px;font-size:0.75rem;color:rgba(255,255,255,0.85);font-weight:600;letter-spacing:0.05em;">v2.5</div>
+            <div style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.25);border-radius:8px;padding:4px 12px;font-size:0.75rem;color:rgba(255,255,255,0.85);font-weight:600;letter-spacing:0.05em;">v2.6</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -519,6 +522,16 @@ def main():
             drafting_pages.render_step2_confirm()
         else:
             drafting_pages.render_step3_result()
+    elif st.session_state.input_mode == "learning":
+        # 学習センター（別系統フロー: 1=アップロード, 2=差分確認, 3=完了）
+        if step == 0:
+            _render_step0_mode_select()
+        elif step == 1:
+            learning_pages.render_step1_upload()
+        elif step == 2:
+            learning_pages.render_step2_review()
+        else:
+            learning_pages.render_step3_done()
     elif step == 0:
         _render_step0_mode_select()
     elif step == 1:
@@ -564,6 +577,8 @@ def _render_step_indicator():
         steps = ["入力方法", "PDF読み取り", "確認・修正", "見積プレビュー", "ダウンロード"]
     elif st.session_state.input_mode == "drafting":
         steps = drafting_pages.drafting_step_names()
+    elif st.session_state.input_mode == "learning":
+        steps = learning_pages.learning_step_names()
     else:
         steps = ["入力方法", "データ入力", "確認", "見積プレビュー", "ダウンロード"]
 
@@ -591,7 +606,7 @@ def _render_step0_mode_select():
     st.markdown('<p style="text-align:center;font-size:1.1rem;color:#475569;font-weight:500;">入力方法を選択してください</p>', unsafe_allow_html=True)
     st.markdown("")
 
-    col1, col_gap1, col2, col_gap2, col3 = st.columns([2, 0.3, 2, 0.3, 2])
+    col1, col_gap1, col2, col_gap2, col3, col_gap3, col4 = st.columns([2, 0.25, 2, 0.25, 2, 0.25, 2])
 
     with col1:
         st.markdown("""
@@ -635,6 +650,9 @@ def _render_step0_mode_select():
 
     with col3:
         drafting_pages.render_mode_card()
+
+    with col4:
+        learning_pages.render_mode_card()
 
 
 # =============================================================
@@ -831,6 +849,335 @@ def _field_errors(validation, keyword: str) -> list[str]:
         if keyword in msg:
             hits.append(msg)
     return hits
+
+
+# =============================================================
+# AIからの確認事項セクション（Step 2 で使用・API不要の決定的ロジック）
+# =============================================================
+# 確認対象フィールドの定義: field_path -> ラベル/型/選択肢
+# kind: "float" / "int" / "bool" / "choice" / "str"
+_CONFIRMATION_FIELD_DEFS = {
+    # --- 価格計算に直接使われるフィールド（pricing_engine._build_formula_variables 参照）---
+    "equipment.pv_capacity_kw":        {"label": "想定PV容量 (kW)",           "kind": "float", "step": 0.01},
+    "equipment.planned_panels":        {"label": "設置予定枚数",              "kind": "int"},
+    "equipment.module_output_w":       {"label": "モジュール定格出力 (W/枚)", "kind": "float", "step": 1.0},
+    "high_voltage.separation_ns_mm":   {"label": "離隔 縦(南北) mm",          "kind": "float", "step": 100.0},
+    "high_voltage.separation_ew_mm":   {"label": "離隔 横(東西) mm",          "kind": "float", "step": 100.0},
+    "supplementary.crane_available":   {"label": "クレーンの有無",            "kind": "bool"},
+    "supplementary.scaffold_needed":   {"label": "足場の要否",                "kind": "bool"},
+    "supplementary.cubicle_location":  {"label": "キュービクル・電気室の有無", "kind": "bool"},
+    "high_voltage.pre_use_self_check": {"label": "使用前自己確認",            "kind": "bool"},
+    # --- Step2 に表示されるその他の主要フィールド（信頼度が低い場合のみ確認対象）---
+    "project.project_name":            {"label": "案件名",                    "kind": "str"},
+    "project.address":                 {"label": "所在地",                    "kind": "str"},
+    "project.postal_code":             {"label": "郵便番号",                  "kind": "str"},
+    "project.survey_date":             {"label": "調査日",                    "kind": "str"},
+    "project.surveyor":                {"label": "調査者",                    "kind": "str"},
+    "equipment.module_maker":          {"label": "モジュールメーカー",        "kind": "str"},
+    "equipment.module_model":          {"label": "モジュール型式",            "kind": "str"},
+    "high_voltage.single_line_diagram": {"label": "単線結線図",               "kind": "bool"},
+    "high_voltage.ground_type":        {"label": "接地種類",                  "kind": "choice", "options": ["A", "C", "D"]},
+    "supplementary.wiring_route":      {"label": "配管・配線ルート",          "kind": "choice", "options": ["確定", "未確定"]},
+    "supplementary.pole_number":       {"label": "電柱番号",                  "kind": "str"},
+}
+
+# 見積計算の数量算出に必須の数値フィールド（未入力/0 なら確認事項化）
+_PRICING_REQUIRED_NUMERIC = [
+    "equipment.pv_capacity_kw",
+    "equipment.planned_panels",
+    "equipment.module_output_w",
+    "high_voltage.separation_ns_mm",
+    "high_voltage.separation_ew_mm",
+]
+
+# pricing_rules の condition に登場する設備有無フィールド（「なし」のままだと計上されない）
+_PRICING_CONDITION_BOOLS = [
+    "supplementary.cubicle_location",
+    "supplementary.crane_available",
+    "supplementary.scaffold_needed",
+    "high_voltage.pre_use_self_check",
+]
+
+# 確認事項の最大件数（優先度順に切り詰め）
+_CONFIRMATION_MAX_ITEMS = 10
+
+
+def _ca_get_value(survey: SurveyData, field_path: str):
+    """ドット区切りパスで現調データから値を取得"""
+    obj = survey
+    for part in field_path.split("."):
+        obj = getattr(obj, part)
+    return obj
+
+
+def _ca_set_value(survey: SurveyData, field_path: str, value) -> None:
+    """ドット区切りパスで現調データに値を書き込み"""
+    parts = field_path.split(".")
+    obj = survey
+    for part in parts[:-1]:
+        obj = getattr(obj, part)
+    setattr(obj, parts[-1], value)
+
+
+def _ca_format_value(value, kind: str) -> str:
+    """確認事項の表示・ログ用に値を日本語表記へ整形"""
+    if kind == "bool":
+        return "あり" if value else "なし"
+    if hasattr(value, "value"):  # Enum
+        return str(value.value)
+    if kind == "float":
+        return f"{float(value or 0):g}"
+    if kind == "int":
+        return str(int(value or 0))
+    s = str(value or "").strip()
+    return s if s else "（未入力）"
+
+
+def _ca_conf_level(conf) -> str:
+    """field_confidences の値（Enum/str 混在）を文字列に正規化"""
+    if conf is None:
+        return ""
+    return conf.value if hasattr(conf, "value") else str(conf)
+
+
+def _build_confirmation_items(survey: SurveyData):
+    """確認事項を決定的に生成する（優先度順・最大 _CONFIRMATION_MAX_ITEMS 件）
+
+    優先度:
+      a. AI読み取り信頼度が low → medium のフィールド
+      b. 見積計算に必要だが未入力/0 の数値フィールド、
+         pricing_rules の条件に登場する設備有無（「なし」のまま）
+      c. extraction_warnings（該当フィールドがあれば回答欄を紐付け）
+
+    Returns:
+        (items, unlinked_warnings):
+            items: 回答ウィジェット付き確認事項のリスト（dict）
+            unlinked_warnings: フィールドに紐付かなかった読み取り警告
+    """
+    items: list[dict] = []
+    seen: set[str] = set()
+    conf_map = survey.field_confidences or {}
+
+    def _add(path: str, question: str, source: str) -> None:
+        if path in seen or path not in _CONFIRMATION_FIELD_DEFS:
+            return
+        seen.add(path)
+        d = _CONFIRMATION_FIELD_DEFS[path]
+        items.append({
+            "path": path,
+            "label": d["label"],
+            "kind": d["kind"],
+            "options": d.get("options"),
+            "step": d.get("step"),
+            "question": question,
+            "source": source,
+        })
+
+    # a. 低信頼度 → 中信頼度 の順
+    for target, mark in ((ConfidenceLevel.LOW.value, "🔴"), (ConfidenceLevel.MEDIUM.value, "🟡")):
+        for path, d in _CONFIRMATION_FIELD_DEFS.items():
+            if path in conf_map and _ca_conf_level(conf_map[path]) == target:
+                cur = _ca_format_value(_ca_get_value(survey, path), d["kind"])
+                _add(path,
+                     f"{mark} AIの読み取りに自信がありません。値を確認してください: "
+                     f"{d['label']} = {cur}",
+                     "confidence")
+
+    # b. 見積計算に必要な数値が未入力/0（ユーザー確認済み=high はスキップ）
+    for path in _PRICING_REQUIRED_NUMERIC:
+        if _ca_conf_level(conf_map.get(path)) == ConfidenceLevel.HIGH.value:
+            continue
+        if not _ca_get_value(survey, path):
+            d = _CONFIRMATION_FIELD_DEFS[path]
+            _add(path, f"⚠️ 見積計算に必要ですが未入力です: {d['label']}", "missing")
+
+    # b'. pricing_rules の条件に登場する設備有無（「なし」のままだと計上されない）
+    for path in _PRICING_CONDITION_BOOLS:
+        if _ca_conf_level(conf_map.get(path)) == ConfidenceLevel.HIGH.value:
+            continue
+        if not _ca_get_value(survey, path):
+            d = _CONFIRMATION_FIELD_DEFS[path]
+            _add(path,
+                 f"見積金額に影響する項目が「なし」になっています。"
+                 f"現地の状況を確認してください: {d['label']}",
+                 "missing")
+
+    # c. 読み取り警告（ラベル一致するフィールドがあれば回答欄を紐付け）
+    unlinked_warnings: list[str] = []
+    for warn in (survey.extraction_warnings or []):
+        linked = False
+        for path, d in _CONFIRMATION_FIELD_DEFS.items():
+            if d["label"] in warn or path.split(".")[-1] in warn:
+                if path not in seen:
+                    _add(path, f"読み取り時の注意: {warn}", "warning")
+                linked = True
+                break
+        if not linked:
+            unlinked_warnings.append(warn)
+
+    # 上限で切り捨てられた警告由来の項目は参考表示側に戻す（情報を落とさない）
+    for it in items[_CONFIRMATION_MAX_ITEMS:]:
+        if it["source"] == "warning":
+            unlinked_warnings.append(it["question"].replace("読み取り時の注意: ", ""))
+
+    return items[:_CONFIRMATION_MAX_ITEMS], unlinked_warnings
+
+
+def _apply_confirmation_answers(survey: SurveyData, items: list[dict]) -> None:
+    """確認事項への回答を survey_data に書き込み、ログを保持して再描画
+
+    - 回答値を該当フィールドに書き込み、field_confidences を "high" に更新
+    - 「<ラベル>: <旧値> → <回答値>」形式のログを
+      st.session_state["confirmation_answers_log"] に追記（根拠テキストDL用）
+    """
+    answer_logs: list[str] = []
+
+    for item in items:
+        wkey = "ca_" + item["path"].replace(".", "_")
+        if wkey not in st.session_state:
+            continue
+        raw = st.session_state[wkey]
+        kind = item["kind"]
+        old = _ca_get_value(survey, item["path"])
+        old_disp = _ca_format_value(old, kind)
+
+        if kind == "bool":
+            if raw == "あり":
+                new = True
+            elif raw == "なし":
+                new = False
+            else:
+                continue  # 「不明（回答しない）」→ 未回答扱い
+        elif kind == "choice":
+            if str(raw).startswith("不明"):
+                continue
+            new = GroundType(raw) if item["path"] == "high_voltage.ground_type" else str(raw)
+        elif kind == "int":
+            new = int(raw)
+        elif kind == "float":
+            new = float(raw)
+        else:  # str
+            new = str(raw).strip()
+            if not new:
+                continue  # 空のまま → 未回答扱い
+
+        new_disp = _ca_format_value(new, kind)
+        changed = new_disp != old_disp
+
+        # 値が変わっていない場合: 信頼度確認の項目と、あり/なしを明示回答した
+        # bool 項目は「確認済み」として扱う（「クレーンなし」を確認しても
+        # 質問が消えない問題への対策。不明選択は上で continue 済み）
+        if not changed and item["source"] != "confidence" and kind != "bool":
+            continue
+
+        _ca_set_value(survey, item["path"], new)
+        survey.field_confidences[item["path"]] = ConfidenceLevel.HIGH
+        if changed:
+            answer_logs.append(f"{item['label']}: {old_disp} → {new_disp}")
+        else:
+            answer_logs.append(f"{item['label']}: {new_disp}（変更なし・ユーザー確認済み）")
+
+    memo = str(st.session_state.get("ca_free_memo") or "").strip()
+    log = st.session_state.get("confirmation_answers_log") or {"answers": [], "memo": ""}
+    log["answers"].extend(answer_logs)
+    log["memo"] = memo
+    st.session_state["confirmation_answers_log"] = log
+
+    if answer_logs or memo:
+        st.session_state.survey_data = survey
+        msg = f"✅ {len(answer_logs)}件の回答を現調データに反映しました" if answer_logs \
+            else "✅ 補足メモを保存しました"
+        st.session_state["ca_flash"] = msg
+        st.success(msg)
+        st.rerun()
+    else:
+        st.info("反映する回答がありませんでした。値の変更、または「あり/なし」の選択をしてください。")
+
+
+def _render_confirmation_section(survey: SurveyData) -> None:
+    """📝 AIからの確認事項セクション（Step 2）
+
+    信頼度の低い読み取り・見積計算に必要な未入力項目・読み取り警告から
+    確認事項を自動生成し、回答を現調データへ即時反映する（API不要）。
+    回答は survey_data 更新経由でそのまま見積計算に反映される。
+    """
+    items, unlinked_warnings = _build_confirmation_items(survey)
+
+    title = "📝 AIからの確認事項（回答すると見積精度が上がります）"
+    if items:
+        title += f" — {len(items)}件"
+
+    with st.expander(title, expanded=bool(items)):
+        st.caption("回答内容はこの見積にすぐ反映されます。"
+                   "学習センターと合わせて使うと次回以降の精度も向上します")
+
+        flash = st.session_state.pop("ca_flash", None)
+        if flash:
+            st.success(flash)
+
+        if not items and not unlinked_warnings:
+            st.info("✅ AIの読み取りに不明点はありませんでした")
+            return
+
+        for item in items:
+            st.markdown(f"**{item['question']}**")
+            wkey = "ca_" + item["path"].replace(".", "_")
+            cur = _ca_get_value(survey, item["path"])
+            kind = item["kind"]
+            if kind == "int":
+                st.number_input(
+                    item["label"], value=int(cur or 0), min_value=0, step=1,
+                    key=wkey, label_visibility="collapsed")
+            elif kind == "float":
+                st.number_input(
+                    item["label"], value=float(cur or 0), min_value=0.0,
+                    step=float(item.get("step") or 1.0),
+                    key=wkey, label_visibility="collapsed")
+            elif kind == "bool":
+                st.selectbox(
+                    item["label"], ["不明（回答しない）", "あり", "なし"], index=0,
+                    key=wkey, label_visibility="collapsed")
+            elif kind == "choice":
+                st.selectbox(
+                    item["label"], ["不明（回答しない）"] + list(item["options"]),
+                    index=0, key=wkey, label_visibility="collapsed")
+            else:  # str
+                st.text_input(
+                    item["label"], value=str(cur or ""),
+                    key=wkey, label_visibility="collapsed")
+
+        if unlinked_warnings:
+            st.markdown("**その他の読み取り注意事項（参考）**")
+            for warn in unlinked_warnings:
+                st.caption(f"- {warn}")
+
+        st.text_area(
+            "その他の補足（自由記入）",
+            key="ca_free_memo",
+            placeholder="例: キュービクルは増設予定あり。搬入経路は北側道路から。",
+            height=80,
+        )
+
+        if st.button("✅ 回答を反映", type="primary", key="ca_apply"):
+            _apply_confirmation_answers(survey, items)
+
+
+def _append_confirmation_log_to_estimate(estimate: EstimateData) -> None:
+    """確認事項への回答ログを見積の根拠テキストへ追記（トレーサビリティ確保）
+
+    回答済み項目と自由記入メモを reasoning_list 末尾に
+    「■ 確認事項への回答（ユーザー確認済み）」セクションとして残す。
+    """
+    log = st.session_state.get("confirmation_answers_log") or {}
+    answers = log.get("answers") or []
+    memo = str(st.session_state.get("ca_free_memo") or log.get("memo") or "").strip()
+    if not answers and not memo:
+        return
+    estimate.reasoning_list.append("■ 確認事項への回答（ユーザー確認済み）")
+    for line in answers:
+        estimate.reasoning_list.append(f"・{line}")
+    if memo:
+        estimate.reasoning_list.append(f"・補足メモ: {memo}")
 
 
 def _render_step1_direct_input():
@@ -1324,6 +1671,9 @@ def _render_step2_review():
             for w in survey.extraction_warnings:
                 st.caption(f"  - {w}")
 
+    # 📝 AIからの確認事項（回答すると見積精度が上がる・direct/pdf 共通）
+    _render_confirmation_section(survey)
+
     # レイアウト選択（PDFモードのみ: 横並び / タブ切替）
     layout_mode = "side_by_side"
     if is_pdf_mode:
@@ -1566,6 +1916,8 @@ def _render_step2_review():
             st.session_state.survey_data = survey
             with st.spinner("見積データを生成中..."):
                 estimate = build_estimate(survey, st.session_state.client_name)
+                # 確認事項への回答を根拠テキストに追記（トレーサビリティ確保）
+                _append_confirmation_log_to_estimate(estimate)
                 st.session_state.estimate_data = estimate
             st.session_state.step = 3
             st.rerun()
@@ -2129,6 +2481,15 @@ def _render_step3_estimate():
             st.rerun()
         return
 
+    # v2.6 学習済みルールの反映状況（学習センター。失敗時は表示しないだけ）
+    try:
+        from learning.apply_estimate import learned_rules_summary
+        _learned = learned_rules_summary()
+        if _learned.get("total", 0) >= 1:
+            st.caption(f"🧠 学習済みルール {_learned['total']}件が単価・項目に反映されています")
+    except Exception:
+        pass
+
     # v2.3 新機能セクション
     _render_voice_edit_section(estimate)
     _render_product_info_section(estimate)
@@ -2220,6 +2581,12 @@ def _render_step3_estimate():
             with st.spinner("PDF を生成中..."):
                 pdf_bytes = generate_pdf(estimate)
                 st.session_state.pdf_bytes = pdf_bytes
+            # 学習の材料として見積履歴を自動保存（失敗しても本体フローは止めない）
+            try:
+                from learning.history import save_estimate_history
+                save_estimate_history(estimate)
+            except Exception:
+                pass
             st.session_state.step = 4
             st.rerun()
 
@@ -2392,6 +2759,9 @@ def _render_step4_download():
             file_name=f"根拠一覧_{estimate.cover.estimate_id}.txt",
             mime="text/plain", use_container_width=True):
             st.markdown('<div class="success-box" style="text-align:center;">✅ 根拠一覧のダウンロードを開始しました</div>', unsafe_allow_html=True)
+
+    # v2.6 学習センターへの導線（履歴は PDF 生成時に自動保存済み）
+    st.caption("🧠 この見積は学習用の履歴として保存済みです。正規見積が確定したら学習センターで差分学習できます")
 
     st.markdown("")
     st.markdown("")

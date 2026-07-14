@@ -24,3 +24,10 @@ vercel.json
 
 # Streamlitシークレット
 .streamlit/secrets.toml
+
+# 学習用の見積・図面履歴（顧客データ）
+data/
+# 学習済みルール（顧客の案件名・図面スペックを含む）
+knowledge/learned_estimate_rules.json
+knowledge/learned_drawing_rules.json
+knowledge/learning_history.json
