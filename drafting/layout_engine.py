@@ -257,12 +257,13 @@ def _apply_roof_type_defaults(face: RoofFace, panel: PanelSpec) -> PanelSpec:
     if not d:
         return panel
     try:
-        if face.margin_mm == 500.0 and d.get("margin_mm") is not None:
+        # 標準既定値のまま or 0（AI抽出の「記載なし」は0で返る）を未指定とみなす
+        if face.margin_mm in (500.0, 0, 0.0) and d.get("margin_mm") is not None:
             face.margin_mm = float(d["margin_mm"])
         gl, gs = panel.gap_long_mm, panel.gap_short_mm
-        if gl == 25.0 and d.get("gap_long_mm") is not None:
+        if gl in (25.0, 0, 0.0) and d.get("gap_long_mm") is not None:
             gl = float(d["gap_long_mm"])
-        if gs == 10.0 and d.get("gap_short_mm") is not None:
+        if gs in (10.0, 0, 0.0) and d.get("gap_short_mm") is not None:
             gs = float(d["gap_short_mm"])
         if (gl, gs) == (panel.gap_long_mm, panel.gap_short_mm):
             return panel

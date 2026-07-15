@@ -3,6 +3,10 @@
 knowledge/ 配下に学習済みルールと学習ログを保持する。
 書き込みは tmp ファイル + os.replace のアトミック方式
 （product/product_registry.py と同じパターン）。
+
+Supabase（learning/storage_backend.py）が構成されている場合は
+Supabase を正として読み書きし、ローカルファイルは並行保存する
+（Streamlit Cloud はコンテナ再起動で実行時ファイルが消えるため）。
 """
 import json
 import logging
@@ -49,9 +53,38 @@ def _atomic_write(path: Path, data: dict) -> None:
     os.replace(tmp_path, path)
 
 
+def _load_doc_list(path: Path, key: str) -> list[dict]:
+    """Supabase（構成時）→ ローカルファイルの順でリストを読む。
+
+    KVキーはファイル名の stem（learned_estimate_rules 等）。
+    """
+    try:
+        from learning.storage_backend import is_enabled, kv_get
+        if is_enabled():
+            doc = kv_get(path.stem)
+            if doc is not None:
+                items = doc.get(key, [])
+                if isinstance(items, list):
+                    return items
+    except Exception as e:
+        logger.warning("Supabase読込に失敗、ローカルにフォールバック: %s", e)
+    return _load_json_list(path, key)
+
+
+def _save_doc(path: Path, data: dict) -> None:
+    """ローカルに常に保存し、Supabase 構成時は同内容を upsert する。"""
+    _atomic_write(path, data)
+    try:
+        from learning.storage_backend import is_enabled, kv_set
+        if is_enabled() and not kv_set(path.stem, data):
+            logger.warning("Supabase保存に失敗（ローカルには保存済み）: %s", path.stem)
+    except Exception as e:
+        logger.warning("Supabase保存に失敗（ローカルには保存済み）: %s", e)
+
+
 def load_rules(target: str) -> list[dict]:
     """学習ルール全件（enabled/disabled 含む）を返す。"""
-    return _load_json_list(_rules_path(target), "rules")
+    return _load_doc_list(_rules_path(target), "rules")
 
 
 def enabled_rules(target: str) -> list[dict]:
@@ -60,7 +93,7 @@ def enabled_rules(target: str) -> list[dict]:
 
 
 def save_rules(target: str, rules: list[dict]) -> None:
-    _atomic_write(_rules_path(target), {
+    _save_doc(_rules_path(target), {
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "rules": rules,
     })
@@ -130,12 +163,12 @@ def delete_rule(target: str, rule_id: str) -> None:
 
 def append_learning_log(entry: dict) -> None:
     """学習セッションの記録を追記する（いつ・何を・何件学習したか）。"""
-    logs = _load_json_list(LEARNING_LOG_PATH, "logs")
+    logs = _load_doc_list(LEARNING_LOG_PATH, "logs")
     entry = dict(entry)
     entry.setdefault("logged_at", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     logs.append(entry)
-    _atomic_write(LEARNING_LOG_PATH, {"logs": logs})
+    _save_doc(LEARNING_LOG_PATH, {"logs": logs})
 
 
 def load_learning_log() -> list[dict]:
-    return _load_json_list(LEARNING_LOG_PATH, "logs")
+    return _load_doc_list(LEARNING_LOG_PATH, "logs")

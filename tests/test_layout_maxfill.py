@@ -83,6 +83,16 @@ def test_target_specified_keeps_measured_gaps():
     assert spec.roof_faces[0].panel_count == 5, "枚数指定が離隔既定値で崩れている"
 
 
+def test_zero_values_treated_as_unspecified():
+    """AI抽出の「記載なし=0」のマージン・隙間にも屋根種別既定値が効くこと。"""
+    spec = _make_spec(roof_type=RoofType.RIKUYANE, target=None,
+                      margin=0.0, gap_long=0.0, gap_short=0.0)
+    spec = place_panels(spec)
+    assert spec.roof_faces[0].margin_mm == 500.0, \
+        f"margin=0（未指定）に既定値500が適用されるはずが {spec.roof_faces[0].margin_mm}"
+    assert spec.panel.gap_long_mm == 500.0, "gap=0（未指定）に陸屋根行間500が適用されるはず"
+
+
 def test_effective_gap_reflected_in_spec():
     """陸屋根既定値が効いた場合、spec.panel の隙間にも反映され
     図面の間隔注記と実配置が食い違わないこと（レビュー指摘 med）。"""
@@ -119,6 +129,7 @@ def main():
         test_explicit_gap_wins_over_roof_defaults,
         test_explicit_margin_wins,
         test_target_specified_keeps_measured_gaps,
+        test_zero_values_treated_as_unspecified,
         test_effective_gap_reflected_in_spec,
         test_golden_samples_unchanged,
     ]
