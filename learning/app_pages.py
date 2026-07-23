@@ -173,6 +173,22 @@ def render_mode_card():
         st.rerun()
 
 
+def _render_persistence_indicator():
+    """学習データの永続化状態（Supabase共有 / ローカル揮発）を表示する。
+
+    is_enabled() は接続情報の存在チェックのみ（ネットワーク往復なし）で軽量。
+    """
+    try:
+        from learning import storage_backend
+        if storage_backend.is_enabled():
+            st.success("🟢 学習データは全員で共有されています（クラウド保存）")
+        else:
+            st.warning("🟡 この環境ではローカル保存です — 再起動で消える可能性・"
+                       "全員共有にはSupabase設定が必要")
+    except Exception:
+        pass
+
+
 # =============================================================
 # Step 1: 学習タイプ選択 + アップロード → 差分抽出
 # =============================================================
@@ -182,6 +198,7 @@ def render_step1_upload():
     st.markdown("### 🧠 学習センター｜比較データのアップロード")
     st.caption("AIが作成した見積・図面と、担当者が仕上げた正規版を比較し、"
                "差分（単価・項目・図面規約）を次回の生成に活かします。")
+    _render_persistence_indicator()
 
     tab_est, tab_dwg = st.tabs(["📊 見積の学習", "📐 図面の学習"])
 

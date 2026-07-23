@@ -87,8 +87,14 @@ class PanelSpec:
     output_w: float = 0.0           # 1枚あたり出力 W（例: 465）
     long_mm: float = 0.0            # パネル長辺 mm（例: 1762 / 1903 / 2278）
     short_mm: float = 0.0           # パネル短辺 mm（例: 1134 / 1170）
-    gap_long_mm: float = 25.0       # 行方向（縦・段と段の間）の標準隙間 mm（サンプル標準=25）
-    gap_short_mm: float = 10.0      # 列方向（横・列と列の間）の標準隙間 mm（サンプル標準=10）
+    gap_long_mm: float = 25.0       # 長辺側隙間 mm（行間・縦・段と段の間。サンプル標準=25）
+    gap_short_mm: float = 10.0      # 短辺側隙間 mm（列間・横・列と列の間。サンプル標準=10）
+    # --- 点検通路（2026-07-23 会議 修正①）---
+    # N列ごとに人が通れる点検通路を確保する。0 = 通路なし（従来配置）。
+    # dataclass 既定は必ず 0.0 のまま（保存済みJSON・学習データの後方互換のため）。
+    # 新規下書きのUI既定 800mm は app_pages 側で注入する。
+    walkway_mm: float = 0.0          # 点検通路の幅 mm（0=通路なし。UI既定800）
+    walkway_every_n_cols: int = 2    # 何列ごとに点検通路を入れるか（既定: 2列ごと）
 
     def area_sqm(self) -> float:
         return (self.long_mm / 1000.0) * (self.short_mm / 1000.0)

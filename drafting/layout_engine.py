@@ -41,6 +41,10 @@ from drafting.models import (
 # 内部ユーティリティ: グリッド枚数計算
 # =============================================================
 
+# 点検通路を挿入する既定の列間隔（2026-07-23 会議 修正①: 2列ごと）
+WALKWAY_EVERY_N_COLS = 2
+
+
 def _fit_count(avail: float, panel: float, gap: float) -> int:
     """利用可能長 avail に panel（隙間 gap）が何個並ぶかを返す。
 
@@ -63,6 +67,38 @@ def _fit_count(avail: float, panel: float, gap: float) -> int:
     return max(0, int(math.floor((avail + gap) / denom)))
 
 
+def _col_span(n: int, panel: float, gap: float, walkway: float, group: int) -> float:
+    """n 列並べたときの必要幅 mm（group 列ごとに点検通路幅を挿入）。
+
+    通路は group 列目・2*group 列目…の直後に入る。
+    必要幅 = n*panel + (n-1-k)*gap + k*walkway、k = (n-1)//group。
+    """
+    if n <= 0:
+        return 0.0
+    k = (n - 1) // group if group > 0 else 0
+    return n * panel + (n - 1 - k) * gap + k * walkway
+
+
+def _fit_count_with_walkway(
+    avail: float, panel: float, gap: float, walkway: float, group: int
+) -> int:
+    """点検通路込みで利用可能幅 avail に並ぶ列数を返す。
+
+    walkway<=0 または group<=0 なら従来の _fit_count に委譲する
+    （浮動小数まで既存結果と完全一致させ、後方互換を保証する）。
+    """
+    if walkway <= 0 or group <= 0:
+        return _fit_count(avail, panel, gap)
+    if panel <= 0 or avail <= 0:
+        return 0
+    n = 0
+    while _col_span(n + 1, panel, gap, walkway, group) <= avail:
+        n += 1
+        if n > 10000:  # 発散ガード（不正入力対策）
+            break
+    return n
+
+
 def _grid_positions(
     avail_w: float,
     avail_d: float,
@@ -71,6 +107,8 @@ def _grid_positions(
     gap_col: float,
     gap_row: float,
     margin: float,
+    walkway_col: float = 0.0,
+    walkway_group: int = WALKWAY_EVERY_N_COLS,
 ) -> Tuple[int, int, List[Tuple[float, float]]]:
     """中央寄せグリッドの (rows, cols, 左上座標リスト) を返す。
 
@@ -81,30 +119,46 @@ def _grid_positions(
         avail_d: マージン控除後の奥行 mm（屋根奥行方向）。
         panel_w: パネルの幅方向寸法 mm。
         panel_h: パネルの奥行方向寸法 mm。
-        gap_col: 列間（幅方向）の隙間 mm。
-        gap_row: 行間（奥行方向）の隙間 mm。
+        gap_col: 列間（幅方向）＝短辺側隙間 mm。
+        gap_row: 行間（奥行方向）＝長辺側隙間 mm。
         margin: 屋根エッジからの離隔 mm（左上オフセットの基準）。
+        walkway_col: 点検通路の幅 mm（0以下=通路なし・従来配置）。
+        walkway_group: 何列ごとに点検通路を入れるか（既定2列ごと）。
 
     Returns:
         (rows, cols, [(x, y), ...])。配置不能なら (0, 0, [])。
     """
-    cols = _fit_count(avail_w, panel_w, gap_col)
+    use_walkway = walkway_col > 0 and walkway_group > 0
+    cols = _fit_count_with_walkway(avail_w, panel_w, gap_col, walkway_col, walkway_group)
     rows = _fit_count(avail_d, panel_h, gap_row)
     if rows <= 0 or cols <= 0:
         return 0, 0, []
 
-    used_w = cols * panel_w + (cols - 1) * gap_col
+    if use_walkway:
+        used_w = _col_span(cols, panel_w, gap_col, walkway_col, walkway_group)
+    else:
+        used_w = cols * panel_w + (cols - 1) * gap_col
     used_d = rows * panel_h + (rows - 1) * gap_row
     # 水平・垂直とも中央寄せ（マージン内で余った分を均等に振る）
     offset_x = margin + max(0.0, (avail_w - used_w) / 2.0)
     offset_y = margin + max(0.0, (avail_d - used_d) / 2.0)
 
+    # 列ごとの x 座標（通路ありは累積加算。通路なしは従来式のまま＝完全互換）
+    if use_walkway:
+        xs: List[float] = []
+        x = offset_x
+        for c in range(cols):
+            xs.append(x)
+            step = walkway_col if ((c + 1) % walkway_group == 0) else gap_col
+            x += panel_w + step
+    else:
+        xs = [offset_x + c * (panel_w + gap_col) for c in range(cols)]
+
     positions: List[Tuple[float, float]] = []
     for r in range(rows):
+        y = offset_y + r * (panel_h + gap_row)
         for c in range(cols):
-            x = offset_x + c * (panel_w + gap_col)
-            y = offset_y + r * (panel_h + gap_row)
-            positions.append((x, y))
+            positions.append((xs[c], y))
     return rows, cols, positions
 
 
@@ -154,10 +208,12 @@ def _orientation_dims(orientation: str, panel: PanelSpec) -> Tuple[float, float,
     PORTRAIT : パネル長辺を屋根奥行方向に → w=short, h=long。
 
     隙間の規約（実サンプル準拠・向きに依らず一定）:
-        列間（横・隣り合う列の間） = gap_short_mm（標準10mm。モジュール同士の小隙間）
-        行間（縦・段と段の間）     = gap_long_mm（標準25mm。架台レール/水勾配用）
+        列間（横・隣り合う列の間） = gap_short_mm =「短辺側隙間」（標準10mm。モジュール同士の小隙間）
+        行間（縦・段と段の間）     = gap_long_mm  =「長辺側隙間」（標準25mm。架台レール/水勾配用）
         ※実図面（栗原/八木/スパイス）では横10mm・縦25mmが一貫して使われ、
           drawing_renderer のパネル詳細図・簡易グリッドとも一致する。
+        ※用語は 2026-07-23 会議で「長辺側隙間／短辺側隙間」に統一
+          （内部キー名 gap_long_mm / gap_short_mm は後方互換のため不変）。
 
     Returns:
         (panel_w, panel_h, gap_col, gap_row)
@@ -172,6 +228,17 @@ def _orientation_dims(orientation: str, panel: PanelSpec) -> Tuple[float, float,
     return short_mm, long_mm, gap_col, gap_row
 
 
+def _walkway_params(panel: PanelSpec) -> Tuple[float, int]:
+    """パネル仕様から点検通路の (幅mm, N列ごと) を安全に取り出す。
+
+    walkway_mm <= 0 は「通路なし＝従来配置」。旧データ（属性なし）も 0 扱い。
+    """
+    walkway = float(getattr(panel, "walkway_mm", 0.0) or 0.0)
+    group = int(getattr(panel, "walkway_every_n_cols", WALKWAY_EVERY_N_COLS)
+                or WALKWAY_EVERY_N_COLS)
+    return walkway, group
+
+
 def _place_rectangle_one(
     face: RoofFace, panel: PanelSpec, orientation: str
 ) -> Tuple[int, int, List[PanelRect]]:
@@ -183,8 +250,10 @@ def _place_rectangle_one(
     avail_d = depth - 2 * margin
 
     panel_w, panel_h, gap_col, gap_row = _orientation_dims(orientation, panel)
+    walkway, walkway_group = _walkway_params(panel)
     rows, cols, positions = _grid_positions(
-        avail_w, avail_d, panel_w, panel_h, gap_col, gap_row, margin
+        avail_w, avail_d, panel_w, panel_h, gap_col, gap_row, margin,
+        walkway_col=walkway, walkway_group=walkway_group,
     )
     rects = [
         PanelRect(x_mm=x, y_mm=y, w_mm=panel_w, h_mm=panel_h, orientation=orientation)
@@ -217,8 +286,10 @@ def _place_polygon_one(
     avail_d = bbox_d - 2 * margin
 
     panel_w, panel_h, gap_col, gap_row = _orientation_dims(orientation, panel)
+    walkway, walkway_group = _walkway_params(panel)
     rows, cols, positions = _grid_positions(
-        avail_w, avail_d, panel_w, panel_h, gap_col, gap_row, margin
+        avail_w, avail_d, panel_w, panel_h, gap_col, gap_row, margin,
+        walkway_col=walkway, walkway_group=walkway_group,
     )
 
     rects: List[PanelRect] = []

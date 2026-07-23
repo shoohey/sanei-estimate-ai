@@ -306,7 +306,8 @@ def build_user_prompt(drawing_type: str = DrawingType.LAYOUT, hint: str = "") ->
      その場合は屋根面に収まる最大枚数を自動配置する。推定枚数を入れないこと）
    - パネルの向き（縦置き portrait / 横置き landscape）
    - 屋根端・軒・ケラバからの離隔の記載（例「離隔500」「端部より500逃げ」）があれば
-     margin_mm へ。アレイ間・段間の間隔の記載があれば panel.gap_long_mm（行間）へ
+     margin_mm へ。アレイ間・段間の間隔（長辺側隙間）の記載があれば
+     panel.gap_long_mm（行間・段と段の間）へ
 4. 架台種別（mount_type）
 5. PCS（パワコン）の型番・台数（pcs_model, pcs_count）
 6. ストリング系統（◯直×◯並。例「12直×5並」）→ strings（PCSごと）
@@ -433,7 +434,8 @@ def _normalize_parsed(parsed: dict, drawing_type: str) -> tuple[dict, list[str],
     # panel の数値寛容変換
     panel = d.get("panel")
     if isinstance(panel, dict):
-        for k in ("output_w", "long_mm", "short_mm", "gap_long_mm", "gap_short_mm"):
+        for k in ("output_w", "long_mm", "short_mm", "gap_long_mm", "gap_short_mm",
+                  "walkway_mm"):
             if k in panel:
                 panel[k] = _coerce_number(panel[k])
 

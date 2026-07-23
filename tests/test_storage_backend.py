@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import learning.storage_backend as backend
 from learning import store, history
 from models.estimate_data import EstimateData
+from product import product_registry
 
 
 # =============================================================
@@ -200,6 +201,82 @@ def test_local_history_still_works_when_disabled():
     _restore()
 
 
+def test_product_registry_disabled_uses_local():
+    """Supabase未構成なら製品レジストリは従来通りローカルJSONで完結すること。"""
+    _restore()
+    with tempfile.TemporaryDirectory() as tmp:
+        orig_path = product_registry.REGISTRY_PATH
+        product_registry.REGISTRY_PATH = Path(tmp) / "products_registry.json"
+        try:
+            backend.is_enabled = lambda: False
+            p = product_registry.add_product({
+                "product_type": "module", "maker": "Longi",
+                "model": "LR5-72HTH", "output_w": 575})
+            assert product_registry.REGISTRY_PATH.exists(), \
+                "ローカルJSONに保存されるはず"
+            loaded = product_registry.load_registry()
+            assert len(loaded) == 1 and loaded[0]["id"] == p["id"]
+            assert loaded[0]["model"] == "LR5-72HTH"
+        finally:
+            product_registry.REGISTRY_PATH = orig_path
+    _restore()
+
+
+def test_product_registry_enabled_syncs_supabase():
+    """Supabase構成時は製品登録が app_storage(products_registry) に upsert され、
+    読み取りは Supabase 側が優先されること。"""
+    fake = FakeSupabase()
+    with tempfile.TemporaryDirectory() as tmp:
+        orig_path = product_registry.REGISTRY_PATH
+        product_registry.REGISTRY_PATH = Path(tmp) / "products_registry.json"
+        try:
+            fake.install()
+            product_registry.add_product({
+                "product_type": "module", "maker": "Canadian Solar",
+                "model": "CS7L-MS", "output_w": 660})
+            doc = fake.kv.get("products_registry")
+            assert doc is not None, "app_storage の products_registry に upsert されるはず"
+            assert doc.get("schema_version") == product_registry.SCHEMA_VERSION
+            assert doc["products"][0]["model"] == "CS7L-MS"
+            # ローカルにも並行保存されている
+            assert product_registry.REGISTRY_PATH.exists()
+            # ローカルを別内容で汚染 → それでも Supabase 側が優先読取されること
+            with open(product_registry.REGISTRY_PATH, "w", encoding="utf-8") as f:
+                json.dump({"products": [{"maker": "ダミー", "model": "LOCAL-ONLY"}]},
+                          f, ensure_ascii=False)
+            loaded = product_registry.load_registry()
+            assert len(loaded) == 1 and loaded[0]["model"] == "CS7L-MS", \
+                "Supabase が正であるべき（ローカルのLOCAL-ONLYではなくCS7L-MS）"
+        finally:
+            product_registry.REGISTRY_PATH = orig_path
+    _restore()
+
+
+def test_product_registry_migrates_local_on_first_load():
+    """Supabase未登録＋ローカルに既存JSONがある場合、初回読み込みで移行されること。"""
+    fake = FakeSupabase()
+    with tempfile.TemporaryDirectory() as tmp:
+        orig_path = product_registry.REGISTRY_PATH
+        product_registry.REGISTRY_PATH = Path(tmp) / "products_registry.json"
+        try:
+            # 既存ローカルJSONを Supabase 無効の状態で用意（従来環境の再現）
+            backend.is_enabled = lambda: False
+            product_registry.save_registry([
+                {"id": "x-1", "product_type": "pcs",
+                 "maker": "オムロン", "model": "KP-MU"}])
+            # Supabase を有効化（KVは空 = 未登録）して初回読み込み
+            fake.install()
+            assert "products_registry" not in fake.kv
+            loaded = product_registry.load_registry()
+            assert len(loaded) == 1 and loaded[0]["model"] == "KP-MU"
+            doc = fake.kv.get("products_registry")
+            assert doc is not None and doc["products"][0]["model"] == "KP-MU", \
+                "初回読み込みでローカルJSONの内容がSupabaseへ移行されるはず"
+        finally:
+            product_registry.REGISTRY_PATH = orig_path
+    _restore()
+
+
 def main():
     tests = [
         test_disabled_uses_local,
@@ -209,6 +286,9 @@ def main():
         test_estimate_history_roundtrip_supabase,
         test_drawing_history_roundtrip_supabase,
         test_local_history_still_works_when_disabled,
+        test_product_registry_disabled_uses_local,
+        test_product_registry_enabled_syncs_supabase,
+        test_product_registry_migrates_local_on_first_load,
     ]
     print("=== Supabase永続化バックエンドテスト（実Supabase不要） ===")
     failed = 0

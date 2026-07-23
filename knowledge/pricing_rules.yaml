@@ -429,23 +429,28 @@ construction_items:
     pricing_method: "fixed"
     note: "墨出し作業"
 
+  # 修正③（2026-07-23 会議）: 枚数連動項目は「数量=実枚数・単位=枚・単価×枚数」
+  # unit_price は1枚あたり単価（660Wモジュール時 ¥3,300/kW 相当 = ¥2,178/枚）。
+  # 設置枚数が未取得の場合のみ fallback_unit_price_per_kw で従来のkW連動に退避。
   - "no": 2
     description: "架台取付工事"
     remarks: ""
-    quantity_source: "equipment.pv_capacity_kw"
-    quantity_unit: "式"
-    unit_price: 3300
-    pricing_method: "kw_rate"
-    note: "PV容量連動"
+    quantity_source: "equipment.planned_panels"
+    quantity_unit: "枚"
+    unit_price: 2178
+    pricing_method: "panel_rate"
+    fallback_unit_price_per_kw: 3300
+    note: "設置枚数連動（1枚単価×枚数）"
 
   - "no": 3
     description: "パネル取付工事"
     remarks: ""
-    quantity_source: "equipment.pv_capacity_kw"
-    quantity_unit: "式"
-    unit_price: 3300
-    pricing_method: "kw_rate"
-    note: "PV容量連動"
+    quantity_source: "equipment.planned_panels"
+    quantity_unit: "枚"
+    unit_price: 2178
+    pricing_method: "panel_rate"
+    fallback_unit_price_per_kw: 3300
+    note: "設置枚数連動（1枚単価×枚数）"
 
   - "no": 4
     description: "配線　配管工事"

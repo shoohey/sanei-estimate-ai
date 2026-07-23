@@ -23,6 +23,13 @@ _TIMEOUT = 10  # 秒。UI操作を待たせすぎない
 
 def _creds() -> tuple[str, str]:
     """Supabase 接続情報を st.secrets → 環境変数 → .env.local の順で取得する。"""
+    # pytest 実行中は Supabase を常に無効扱いにする。
+    # ローカルの .env.local に実クレデンシャルがあると、テストが本番の
+    # 学習データ（app_storage 等）を読み書き・消去してしまうため。
+    # テストは FakeSupabase（tests/test_storage_backend.py）でモジュール属性を
+    # 差し替える方式なので、このガードの影響を受けない。
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return "", ""
     url = key = ""
     try:
         import streamlit as st

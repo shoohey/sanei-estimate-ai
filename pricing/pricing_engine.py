@@ -267,6 +267,7 @@ def _build_construction_section(rules: dict, survey: SurveyData) -> CategorySect
 
         pricing_method = item_def.get("pricing_method", "fixed")
         unit_price = item_def.get("unit_price", 0)
+        quantity_unit = item_def.get("quantity_unit", "")
 
         if pricing_method == "kw_rate":
             # kW単価: PV容量 × 単価
@@ -274,6 +275,25 @@ def _build_construction_section(rules: dict, survey: SurveyData) -> CategorySect
             amount = int(kw * unit_price)
             quantity_str = str(kw)
             quantity_val = kw
+        elif pricing_method == "panel_rate":
+            # 枚数単価: 設置枚数 × 1枚単価（修正③ 2026-07-23:
+            # 数量=実枚数・単位=枚・単価×枚数。「一式」表示をやめる）
+            # unit_price は「1枚あたり単価」。学習（unit_price_override）で
+            # 1枚単価が補正されても 金額 = 枚数 × 単価 の比例が保たれる。
+            panels = int(survey.equipment.planned_panels or 0)
+            if panels > 0:
+                amount = int(panels * unit_price)
+                quantity_str = str(panels)
+                quantity_val = float(panels)
+            else:
+                # 設置枚数が未取得（抽出0値等）の場合はkW連動にフォールバックし
+                # ¥0明細を防ぐ（v2.6.1 の抽出0値対応と同方針）
+                kw = survey.equipment.pv_capacity_kw
+                unit_price = int(item_def.get("fallback_unit_price_per_kw", 0))
+                amount = int(kw * unit_price)
+                quantity_str = str(kw)
+                quantity_val = kw
+                quantity_unit = "式"
         elif pricing_method == "lump_formula":
             quantity_str, quantity_val = _resolve_quantity(item_def, survey)
             amount = int(quantity_val)
@@ -289,9 +309,9 @@ def _build_construction_section(rules: dict, survey: SurveyData) -> CategorySect
             no=item_def["no"],
             description=item_def["description"],
             remarks=item_def.get("remarks", ""),
-            quantity=f"{quantity_str}{item_def.get('quantity_unit', '')}",
+            quantity=f"{quantity_str}{quantity_unit}",
             quantity_value=quantity_val,
-            quantity_unit=item_def.get("quantity_unit", ""),
+            quantity_unit=quantity_unit,
             unit_price=unit_price,
             amount=amount,
             reasoning=reasoning,

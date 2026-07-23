@@ -53,6 +53,27 @@ def generate_reasoning(
         )
 
     # ========================================
+    # panel_rate: 設置枚数連動（1枚単価 × 枚数）
+    # ========================================
+    if pricing_method == "panel_rate":
+        panels = int(survey.equipment.planned_panels or 0)
+        if panels > 0:
+            return LineItemReasoning(
+                method=PricingMethod.FIXED,
+                formula=f"{panels}枚 × ¥{unit_price:,}/枚 = ¥{amount:,}",
+                source="現調シート 設置枚数より",
+                note=note,
+            )
+        # 設置枚数が未取得の場合のフォールバック（pricing_engine と対応）
+        kw = survey.equipment.pv_capacity_kw
+        return LineItemReasoning(
+            method=PricingMethod.KW_RATE,
+            formula=f"{kw}kW × ¥{unit_price:,}/kW = ¥{amount:,}",
+            source="現調シート PV容量より（設置枚数が未取得のためkW換算）",
+            note=note,
+        )
+
+    # ========================================
     # distance: 配線距離・離隔連動
     # ========================================
     if pricing_method == "distance":

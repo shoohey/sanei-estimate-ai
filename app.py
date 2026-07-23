@@ -2391,6 +2391,17 @@ def _render_roof_layout_section(estimate: EstimateData):
         with sz_col3:
             margin = st.number_input("エッジマージン (m)", min_value=0.0, value=0.5, step=0.1, key="roof_margin")
 
+        # 点検通路（2026-07-23 会議 修正①: 2列ごとに800mm〜1,000mmの通路）
+        wk_col1, wk_col2, _wk_col3 = st.columns(3)
+        with wk_col1:
+            walkway_m = st.number_input(
+                "点検通路幅 (m)", min_value=0.0, value=0.8, step=0.1, key="roof_walkway",
+                help="N列ごとに確保する点検・メンテナンス用の通路幅。標準0.8〜1.0m。0で通路なし（従来計算）")
+        with wk_col2:
+            walkway_n = st.number_input(
+                "通路の間隔（N列ごと）", min_value=1, max_value=20, value=2, step=1,
+                key="roof_walkway_n", help="何列ごとに点検通路を入れるか。標準は2列ごと")
+
         # --- パネル情報 ---
         st.markdown("**☀️ パネル情報**（現調データから自動取得・編集可）")
         if survey:
@@ -2426,6 +2437,7 @@ def _render_roof_layout_section(estimate: EstimateData):
                 roof_width_m=roof_w, roof_depth_m=roof_d,
                 panel_long_m=panel_long, panel_short_m=panel_short,
                 edge_margin_m=margin, orientation=orientation,
+                walkway_m=float(walkway_m), walkway_every_n_cols=int(walkway_n),
             )
             st.session_state.roof_layout = layout
             st.session_state.roof_layout_label = f"{p_maker} {p_model} {int(p_output)}W"

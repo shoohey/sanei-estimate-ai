@@ -181,6 +181,8 @@ def render_step1_upload():
     if manual_btn:
         spec = default_spec()
         spec.drawing_type = dtype
+        # 新規下書きの点検通路は既定800mm（2026-07-23 会議 修正①。0で無効化可能）
+        spec.panel.walkway_mm = 800.0
         _load_draft(spec_to_dict(spec), ["手入力モードです。各項目を入力してください。"])
         st.session_state.step = 2
         st.rerun()
@@ -205,6 +207,9 @@ def _run_extraction(files, dtype: str):
         try:
             from drafting.spec_extractor import extract_drafting_spec
             spec = extract_drafting_spec(tmp_paths, drawing_type=dtype)
+            # 新規下書きの点検通路は既定800mm（AI抽出対象外の項目。0で無効化可能）
+            if not float(getattr(spec.panel, "walkway_mm", 0) or 0):
+                spec.panel.walkway_mm = 800.0
         except Exception as e:
             st.error(f"⚠️ 抽出に失敗しました: {e}")
             st.info("「手入力で1から作成」から手動で入力することもできます。")
@@ -275,12 +280,27 @@ def render_step2_confirm():
         panel["long_mm"] = st.number_input("パネル長辺 (mm)", value=float(panel.get("long_mm", 0) or 0),
                                           min_value=0.0, step=1.0, key="df_plong")
     with p3:
-        panel["gap_long_mm"] = st.number_input("列方向隙間 (mm)", value=float(panel.get("gap_long_mm", 25) or 0),
-                                              min_value=0.0, step=1.0, key="df_pgl")
+        panel["gap_long_mm"] = st.number_input("長辺側隙間 (mm)", value=float(panel.get("gap_long_mm", 25) or 0),
+                                              min_value=0.0, step=1.0, key="df_pgl",
+                                              help="段と段の間（上下方向）の隙間。標準25mm（陸屋根は500mm）")
         panel["short_mm"] = st.number_input("パネル短辺 (mm)", value=float(panel.get("short_mm", 0) or 0),
                                            min_value=0.0, step=1.0, key="df_pshort")
-    panel["gap_short_mm"] = st.number_input("行方向隙間 (mm)", value=float(panel.get("gap_short_mm", 10) or 0),
-                                          min_value=0.0, step=1.0, key="df_pgs")
+    panel["gap_short_mm"] = st.number_input("短辺側隙間 (mm)", value=float(panel.get("gap_short_mm", 10) or 0),
+                                          min_value=0.0, step=1.0, key="df_pgs",
+                                          help="列と列の間（左右方向）の隙間。標準10mm")
+    # 点検通路（2026-07-23 会議 修正①: 2列ごとに800mm〜1,000mmの通路）
+    w1, w2 = st.columns(2)
+    with w1:
+        panel["walkway_mm"] = st.number_input(
+            "点検通路幅 (mm)", value=float(panel.get("walkway_mm", 0) or 0),
+            min_value=0.0, step=50.0, key="df_pwalk",
+            help="N列ごとに確保する点検・メンテナンス用の通路幅。標準800〜1,000mm。"
+                 "0にすると通路なし（従来どおりの配置）")
+    with w2:
+        panel["walkway_every_n_cols"] = int(st.number_input(
+            "通路の間隔（N列ごと）", value=int(panel.get("walkway_every_n_cols", 2) or 2),
+            min_value=1, max_value=20, step=1, key="df_pwalkn",
+            help="何列ごとに点検通路を入れるか。標準は2列ごと"))
     d["panel"] = panel
 
     # ---- 屋根面 ----

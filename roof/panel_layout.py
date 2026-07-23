@@ -168,6 +168,18 @@ def panel_dimensions_from_module(
 # --- 公開API: レイアウト計算 ------------------------------------------------
 
 
+def _walkway_col_span(n: int, panel: float, gap: float, walkway: float, group: int) -> float:
+    """n 列並べたときの必要幅 [m]（group 列ごとに点検通路幅を挿入）。
+
+    必要幅 = n*panel + (n-1-k)*gap + k*walkway、k = (n-1)//group。
+    通路は group 列目・2*group 列目…の直後に入る（drafting/layout_engine と同一規約）。
+    """
+    if n <= 0:
+        return 0.0
+    k = (n - 1) // group if group > 0 else 0
+    return n * panel + (n - 1 - k) * gap + k * walkway
+
+
 def _compute_one_orientation(
     roof_w: float,
     roof_d: float,
@@ -175,21 +187,35 @@ def _compute_one_orientation(
     panel_h: float,
     margin: float,
     gap: float,
+    walkway: float = 0.0,
+    walkway_group: int = 2,
 ) -> tuple[int, int, list]:
     """指定向きのパネル枚数と座標を計算。
 
     panel_w: パネル横幅（屋根幅方向の寸法）
     panel_h: パネル奥行き（屋根奥行き方向の寸法）
+    walkway: 点検通路の幅 [m]（0以下=通路なし・従来計算）
+    walkway_group: 何列ごとに点検通路を入れるか（既定2列ごと）
     """
     avail_w = roof_w - 2 * margin
     avail_d = roof_d - 2 * margin
     if avail_w <= 0 or avail_d <= 0 or panel_w <= 0 or panel_h <= 0:
         return 0, 0, []
 
+    use_walkway = walkway > 0 and walkway_group > 0
+
     # gap 込みのピッチで割る。ただし最後のパネルの後ろにgapは要らない
     # n*panel + (n-1)*gap <= avail
     # n <= (avail + gap) / (panel + gap)
-    cols = int(math.floor((avail_w + gap) / (panel_w + gap))) if (panel_w + gap) > 0 else 0
+    if use_walkway:
+        # 点検通路込み: 必要幅が avail_w に収まる最大列数を増分探索
+        cols = 0
+        while _walkway_col_span(cols + 1, panel_w, gap, walkway, walkway_group) <= avail_w:
+            cols += 1
+            if cols > 10000:  # 発散ガード
+                break
+    else:
+        cols = int(math.floor((avail_w + gap) / (panel_w + gap))) if (panel_w + gap) > 0 else 0
     rows = int(math.floor((avail_d + gap) / (panel_h + gap))) if (panel_h + gap) > 0 else 0
     cols = max(0, cols)
     rows = max(0, rows)
@@ -197,15 +223,27 @@ def _compute_one_orientation(
     positions = []
     if rows > 0 and cols > 0:
         # 余白を左右に均等配分（中央寄せ）
-        used_w = cols * panel_w + (cols - 1) * gap
+        if use_walkway:
+            used_w = _walkway_col_span(cols, panel_w, gap, walkway, walkway_group)
+        else:
+            used_w = cols * panel_w + (cols - 1) * gap
         used_d = rows * panel_h + (rows - 1) * gap
         offset_x = margin + max(0.0, (avail_w - used_w) / 2.0)
         offset_y = margin + max(0.0, (avail_d - used_d) / 2.0)
-        for r in range(rows):
+        # 列ごとの x 座標（通路ありは累積加算。通路なしは従来式のまま＝完全互換）
+        if use_walkway:
+            xs = []
+            x = offset_x
             for c in range(cols):
-                x = offset_x + c * (panel_w + gap)
-                y = offset_y + r * (panel_h + gap)
-                positions.append({"x": x, "y": y, "w": panel_w, "h": panel_h})
+                xs.append(x)
+                step = walkway if ((c + 1) % walkway_group == 0) else gap
+                x += panel_w + step
+        else:
+            xs = [offset_x + c * (panel_w + gap) for c in range(cols)]
+        for r in range(rows):
+            y = offset_y + r * (panel_h + gap)
+            for c in range(cols):
+                positions.append({"x": xs[c], "y": y, "w": panel_w, "h": panel_h})
     return rows, cols, positions
 
 
@@ -217,6 +255,8 @@ def compute_panel_layout(
     edge_margin_m: float = 0.5,
     gap_m: float = 0.02,
     orientation: str = "auto",
+    walkway_m: float = 0.0,
+    walkway_every_n_cols: int = 2,
 ) -> dict:
     """屋根に何枚パネルを配置できるか計算する。
 
@@ -230,10 +270,13 @@ def compute_panel_layout(
         orientation: "portrait"=パネル長辺を屋根奥行きと平行
                      "landscape"=パネル長辺を屋根幅と平行
                      "auto"=両方計算して枚数の多い方を採用
+        walkway_m: 点検通路の幅 [m]（0=通路なし・従来計算。UI既定0.8）
+        walkway_every_n_cols: 何列ごとに点検通路を入れるか（既定2列ごと）
 
     Returns:
         dict: {orientation, panel_count, rows, cols, occupied_area_sqm,
                roof_area_sqm, fill_ratio, positions, margin_m, gap_m,
+               walkway_m, walkway_every_n_cols,
                roof_width_m, roof_depth_m, panel_long_m, panel_short_m}
     """
     # 入力ガード
@@ -246,6 +289,14 @@ def compute_panel_layout(
         gap = float(gap_m)
     except Exception:
         rw = rd = pl = ps = margin = gap = 0.0
+    try:
+        walkway = float(walkway_m)
+    except Exception:
+        walkway = 0.0
+    try:
+        walkway_group = int(walkway_every_n_cols)
+    except Exception:
+        walkway_group = 2
 
     roof_area = max(0.0, rw) * max(0.0, rd)
 
@@ -261,6 +312,8 @@ def compute_panel_layout(
             "positions": [],
             "margin_m": margin,
             "gap_m": gap,
+            "walkway_m": walkway,
+            "walkway_every_n_cols": walkway_group,
             "roof_width_m": rw,
             "roof_depth_m": rd,
             "panel_long_m": pl,
@@ -277,10 +330,12 @@ def compute_panel_layout(
     # portrait: パネル長辺が屋根奥行き(縦)方向 → 横=short, 縦=long
     # landscape: パネル長辺が屋根幅(横)方向 → 横=long, 縦=short
     rows_p, cols_p, pos_p = _compute_one_orientation(
-        rw, rd, short_m, long_m, margin, gap
+        rw, rd, short_m, long_m, margin, gap,
+        walkway=walkway, walkway_group=walkway_group,
     )
     rows_l, cols_l, pos_l = _compute_one_orientation(
-        rw, rd, long_m, short_m, margin, gap
+        rw, rd, long_m, short_m, margin, gap,
+        walkway=walkway, walkway_group=walkway_group,
     )
     count_p = rows_p * cols_p
     count_l = rows_l * cols_l
@@ -312,6 +367,8 @@ def compute_panel_layout(
         "positions": positions,
         "margin_m": margin,
         "gap_m": gap,
+        "walkway_m": walkway,
+        "walkway_every_n_cols": walkway_group,
         "roof_width_m": rw,
         "roof_depth_m": rd,
         "panel_long_m": long_m,

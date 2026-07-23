@@ -1,7 +1,13 @@
-"""ローカル製品レジストリ（JSONベース）
+"""製品レジストリ（JSONベース + Supabase 永続化）
 
 カタログから抽出した製品情報を JSON ファイル
 （knowledge/products_registry.json）に保存・検索するモジュール。
+
+Supabase（learning/storage_backend.py）が構成されている場合は
+Supabase の app_storage（キー: products_registry）を正として読み書きし、
+ローカルファイルは並行保存する（learning/store.py と同じパターン。
+Streamlit Cloud はコンテナ再起動で実行時ファイルが消えるため）。
+既存ローカルJSONは、Supabase 側が未登録なら初回読み込み時に移行される。
 
 主な公開関数:
     - load_registry()
@@ -32,52 +38,57 @@ REGISTRY_PATH = (
 # スキーマバージョン（破壊的変更時にインクリメント）
 SCHEMA_VERSION = 1
 
+# Supabase KV（app_storage テーブル）上の保存キー
+STORAGE_KEY = "products_registry"
+
 
 # ----------------------------------------------------------------------------
 # Public API
 # ----------------------------------------------------------------------------
 def load_registry() -> list[dict]:
-    """JSONファイルから全製品を読み込む。
+    """全製品を読み込む。
 
+    Supabase 構成時は Supabase（app_storage: products_registry）を正として読む。
+    Supabase 側が未登録でローカルJSONに既存データがあれば初回移行する。
+    Supabase 未構成・障害時は従来通りローカルファイルから読む。
     ファイルが存在しない、または読み込めない場合は空リストを返す。
     """
-    if not REGISTRY_PATH.exists():
-        return []
     try:
-        with open(REGISTRY_PATH, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        logger.warning(f"products_registry.json 読み込み失敗: {e}")
-        return []
-
-    if isinstance(data, list):
-        # 旧形式（リストのみ）
-        return [p for p in data if isinstance(p, dict)]
-    if isinstance(data, dict):
-        products = data.get("products", [])
-        if isinstance(products, list):
-            return [p for p in products if isinstance(p, dict)]
-    return []
+        from learning.storage_backend import is_enabled, kv_get
+        if is_enabled():
+            doc = kv_get(STORAGE_KEY)
+            if isinstance(doc, dict):
+                products = doc.get("products", [])
+                if isinstance(products, list):
+                    return [p for p in products if isinstance(p, dict)]
+            elif doc is None:
+                # 初回移行: Supabase 未登録でローカルに既存データがあれば取り込む
+                local = _load_local_registry()
+                if local:
+                    _kv_sync(_build_payload(local))
+                return local
+    except Exception as e:
+        logger.warning("Supabase読込に失敗、ローカルにフォールバック: %s", e)
+    return _load_local_registry()
 
 
 def save_registry(products: list[dict]) -> None:
-    """全製品リストをJSONファイルに保存する。
+    """全製品リストを保存する。
 
-    親ディレクトリが無ければ作成。UTF-8、indent=2、ensure_ascii=False で出力。
+    ローカルJSONファイルには常に保存（tmp + replace のアトミック書込。
+    親ディレクトリが無ければ作成。UTF-8、indent=2、ensure_ascii=False）。
+    Supabase 構成時は同内容を app_storage に upsert する。
     """
     if not isinstance(products, list):
         raise TypeError("products は list である必要があります")
 
     REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "schema_version": SCHEMA_VERSION,
-        "updated_at": _now_iso(),
-        "products": [_jsonable(p) for p in products],
-    }
+    payload = _build_payload(products)
     tmp_path = REGISTRY_PATH.with_suffix(REGISTRY_PATH.suffix + ".tmp")
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
     tmp_path.replace(REGISTRY_PATH)
+    _kv_sync(payload)
 
 
 def add_product(product: dict) -> dict:
@@ -230,6 +241,47 @@ def get_active_module_for_estimate(estimate_or_survey: Any) -> Optional[dict]:
 # ----------------------------------------------------------------------------
 # Internal helpers
 # ----------------------------------------------------------------------------
+def _load_local_registry() -> list[dict]:
+    """ローカルJSONファイルから全製品を読み込む（従来動作）。"""
+    if not REGISTRY_PATH.exists():
+        return []
+    try:
+        with open(REGISTRY_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning(f"products_registry.json 読み込み失敗: {e}")
+        return []
+
+    if isinstance(data, list):
+        # 旧形式（リストのみ）
+        return [p for p in data if isinstance(p, dict)]
+    if isinstance(data, dict):
+        products = data.get("products", [])
+        if isinstance(products, list):
+            return [p for p in products if isinstance(p, dict)]
+    return []
+
+
+def _build_payload(products: list[dict]) -> dict:
+    """保存用payload（ローカルJSON・Supabase KV 共通形式）を作る。"""
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "updated_at": _now_iso(),
+        "products": [_jsonable(p) for p in products],
+    }
+
+
+def _kv_sync(payload: dict) -> None:
+    """Supabase 構成時に app_storage へ upsert する。失敗は警告ログのみで
+    本体フローは止めない（learning/store.py の _save_doc と同じ方針）。"""
+    try:
+        from learning.storage_backend import is_enabled, kv_set
+        if is_enabled() and not kv_set(STORAGE_KEY, payload):
+            logger.warning("Supabase保存に失敗（ローカルには保存済み）: %s", STORAGE_KEY)
+    except Exception as e:
+        logger.warning("Supabase保存に失敗（ローカルには保存済み）: %s", e)
+
+
 def _now_iso() -> str:
     """UTC現在時刻をISO8601文字列で返す。"""
     return datetime.now(timezone.utc).isoformat()
@@ -408,6 +460,14 @@ def _resolve_module_identity(obj: Any) -> tuple[str, str]:
 if __name__ == "__main__":
     import os
     import tempfile
+
+    # セルフテストが実Supabase（.env.local のクレデンシャル）を
+    # 読み書きしないよう強制無効化する
+    try:
+        import learning.storage_backend as _sb
+        _sb.is_enabled = lambda: False
+    except Exception:
+        pass
 
     # テスト用に REGISTRY_PATH を一時ファイルへ差し替え
     _orig_path = REGISTRY_PATH

@@ -240,8 +240,8 @@ def _fill_simple_grid(spec: DraftingSpec, face: RoofFace) -> None:
     p = spec.panel
     long_mm = p.long_mm or 1762.0
     short_mm = p.short_mm or 1134.0
-    gap_long = p.gap_long_mm or 25.0    # 列方向（パネル長辺が並ぶ方向）の隙間
-    gap_short = p.gap_short_mm or 10.0  # 行方向の隙間
+    gap_long = p.gap_long_mm or 25.0    # 長辺側隙間（行間・縦・段と段の間。標準25）
+    gap_short = p.gap_short_mm or 10.0  # 短辺側隙間（列間・横・列と列の間。標準10）
 
     # 向き決定: landscape=長辺が幅方向(w), portrait=短辺が幅方向(w)
     orient = face.orientation
@@ -666,6 +666,53 @@ def _draw_plan_dimensions(ax, spec, mx, my, s, aspect, roof_dim_col) -> None:
     dim_y_b = ry_bot - off * 1.4
     _dim_h(ax, rx0, rx1, dim_y_b, f"{round(roof_w_mm)}", roof_dim_col, aspect,
            label_below=True)
+
+    # --- 点検通路の寸法（2026-07-23 会議 修正①: 通路幅を図面に明示） ---
+    _draw_walkway_dims(ax, spec, face, ox, mx, gy_top, gy_bot, aspect)
+
+
+def _draw_walkway_dims(ax, spec, face, ox, mx, gy_top, gy_bot, aspect) -> None:
+    """点検通路（列間の広い隙間）の幅寸法を通路内に描く。
+
+    spec.panel.walkway_mm > 0 のときのみ有効。代表面の実配置（target間引き後）
+    から隣接列間のクリア隙間を検出し、短辺側隙間より十分広い（+50mm超）ものを
+    点検通路とみなして、パネル域中央の高さに幅数値と「点検通路」ラベルを描く。
+    通路なし（walkway_mm=0 や旧データ）のときは一切描かず既存出力と同一。
+    """
+    walkway_mm = float(getattr(spec.panel, "walkway_mm", 0.0) or 0.0)
+    if walkway_mm <= 0 or not face.panels:
+        return
+
+    # 列ごとの (左端, 右端) を x 座標でグルーピング（実配置に忠実）
+    col_edges: dict = {}
+    for p in face.panels:
+        key = round(p.x_mm, 1)
+        left, right = p.x_mm, p.x_mm + p.w_mm
+        if key in col_edges:
+            col_edges[key][0] = min(col_edges[key][0], left)
+            col_edges[key][1] = max(col_edges[key][1], right)
+        else:
+            col_edges[key] = [left, right]
+    edges = sorted(col_edges.values(), key=lambda lr: lr[0])
+    if len(edges) < 2:
+        return
+
+    # 通路判定しきい値: 短辺側隙間 + 50mm を超えるクリア隙間のみ通路とみなす
+    thresh = float(spec.panel.gap_short_mm or 0.0) + 50.0
+    y_dim = (gy_top + gy_bot) / 2.0  # パネル域中央の高さ（通路帯の内側）
+    th = 0.005 / aspect
+    labeled = False
+    for (l0, r0), (l1, r1) in zip(edges, edges[1:]):
+        clear = l1 - r0
+        if clear <= thresh:
+            continue
+        xa = mx(ox + r0)
+        xb = mx(ox + l1)
+        _dim_h(ax, xa, xb, y_dim, f"{round(clear)}", COL_RED, aspect, tick=0.005)
+        if not labeled:
+            _text(ax, (xa + xb) / 2.0, y_dim - th * 2.6, "点検通路", size=5.5,
+                  color=COL_RED, ha="center", va="top")
+            labeled = True
 
 
 def _dim_h(ax, x0, x1, y, label, color, aspect, *, tick=0.008,

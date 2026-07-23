@@ -9,6 +9,10 @@ pricing/knowledge_base.load_pricing_rules() の末尾から呼ばれるため、
   1項目の unit_price を差替え、note に「（学習補正: ¥X→¥Y）」を追記。
   pricing_method が lump_formula の項目は unit_price 不使用
   （計算式の結果が金額になる。pricing_engine 参照）のため対象外。
+  pricing_method が panel_rate の項目（修正③ 2026-07-23: パネル取付工事・
+  架台取付工事）は unit_price が「1枚あたり単価」なので、学習は常に単価への
+  学習として働き、上書き後も 金額 = 設置枚数 × 学習単価 で枚数連動が保たれる
+  （金額の固定化はしない）。
 - item_suppress: 複合照合で特定した1項目をリストから除去。
 - 備考(remarks)違いの同名項目（例: pricing_rules.yaml 材料費「PVケーブル間」×5）が
   あるため、摘要のみの照合は禁止。ルールの match_remarks（正規化備考）、無ければ
