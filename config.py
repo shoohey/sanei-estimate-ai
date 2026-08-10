@@ -22,6 +22,14 @@ def get_api_key() -> str:
 
 CLAUDE_MODEL = "claude-sonnet-4-6"
 
+# 画像読み取り（現調シート・図面のVision抽出）専用モデル。
+# 2026-08-10: 読み取り精度検証のため claude-fable-5 を試験導入
+# （テキスト処理・学習センターは CLAUDE_MODEL のまま）。
+# 元に戻す場合はこの値を CLAUDE_MODEL と同じにするだけでよい。
+# Fable が利用できない環境では survey_extractor が自動で CLAUDE_MODEL に
+# フォールバックするため、本番が止まることはない。
+CLAUDE_VISION_MODEL = "claude-fable-5"
+
 # パス定数
 ASSETS_DIR = BASE_DIR / "assets"
 FONTS_DIR = ASSETS_DIR / "fonts"

@@ -77,10 +77,13 @@ COMPANY = {
 # 縮尺の選択肢（実スケールから近い分母を選ぶ）
 _SCALE_DENOMS = (60, 75, 100, 150, 200, 300)
 
-# フォント登録（モジュール読み込み時に1度だけ）
-_FONT_DIR = (
-    "/Users/takaishouhei/Claude案件/株式会社サンエー/見積もり作成AI/assets/fonts"
-)
+# フォント登録（モジュール読み込み時に1度だけ）。
+# 絶対パスのハードコードは禁止: Streamlit Cloud（Linuxコンテナ）には開発機の
+# パスが存在せず、DejaVuフォールバック→日本語が全て豆腐（□）になる実障害が
+# 発生した（2026-08-10 顧客提供の生成図面で確認）。リポジトリ相対で解決する。
+from config import FONTS_DIR as _CONFIG_FONTS_DIR
+
+_FONT_DIR = str(_CONFIG_FONTS_DIR)
 _FP_REGULAR: Optional[font_manager.FontProperties] = None
 _FP_BOLD: Optional[font_manager.FontProperties] = None
 

@@ -18,7 +18,7 @@ from extraction.prompts import (
 from extraction.image_preprocessor import auto_select_pipeline
 from extraction.self_consistency import merge_extractions
 from extraction.post_validators import validate_and_correct
-from config import get_api_key, CLAUDE_MODEL
+from config import get_api_key, CLAUDE_MODEL, CLAUDE_VISION_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -493,32 +493,103 @@ def extract_survey_data_multi(
 def _call_claude_api(content: list[dict], attempt: int, temperature: float = 0.0) -> dict:
     """Claude Vision APIを呼び出してJSONレスポンスを返す
 
+    モデルは config.CLAUDE_VISION_MODEL（2026-08-10 から claude-fable-5 を試験導入）。
+    Fable 系はAPI仕様が異なるため _create_vision_message で差分を吸収し、
+    利用できない場合は CLAUDE_MODEL に自動フォールバックする。
+
     改善点:
-    - 既定 temperature=0 で決定論的な出力を得る（手書きOCRで結果の再現性を確保）
+    - 既定 temperature=0 で決定論的な出力を得る（対応モデルのみ。Fable系は
+      temperature 自体を送らないため、同一入力でも実行毎に結果が揺れうる点に注意）
     - 自己一貫性パス時のみ temperature を上げて多様性を出す
     - 前置きやコードフェンス混じりの応答は _extract_json 側で除去する
       （Sonnet 4.6 以降は assistant プリフィルが 400 になるため使用しない）
     """
     client = anthropic.Anthropic(api_key=get_api_key())
-
-    response = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=8192,
-        temperature=temperature,
-        messages=[
-            {
-                "role": "user",
-                "content": content,
-            },
-        ],
-    )
+    response = _create_vision_message(client, content, temperature)
 
     # レスポンスからJSONを抽出
-    response_text = response.content[0].text
+    response_text = _first_text_block(response)
     logger.info(f"API応答（試行{attempt}）: {response_text[:200]}...")
     json_str = _extract_json(response_text)
     raw_data = json.loads(json_str)
     return raw_data
+
+
+# temperature 等のサンプリングパラメータを受け付けないモデル（送ると400）。
+# Fable/Opus5系は thinking 常時ONのため、応答の content 先頭が thinking ブロックに
+# なる点も通常モデルと異なる（_first_text_block で吸収）。
+_NO_TEMPERATURE_MODEL_PREFIXES = (
+    "claude-fable", "claude-mythos", "claude-opus-5",
+    "claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5",
+)
+
+
+def _create_vision_message(client, content: list[dict], temperature: float,
+                           system: str = None):
+    """CLAUDE_VISION_MODEL で Vision リクエストを送る。
+
+    Fable が利用できない環境（組織のデータ保持設定による 400、
+    安全分類器による stop_reason=refusal）では CLAUDE_MODEL に
+    自動フォールバックし、読み取りフローを止めない。
+    drafting/spec_extractor（手書き図面読取）からも共用される。
+    """
+    try:
+        response = _send_vision_request(
+            client, CLAUDE_VISION_MODEL, content, temperature, system)
+        if getattr(response, "stop_reason", None) == "refusal":
+            raise ValueError(
+                f"{CLAUDE_VISION_MODEL} の安全分類器により応答が拒否されました")
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            # thinking込みの上限に達しJSONが途中で切れている。切れたJSONは
+            # パース不能で同条件リトライは無意味（2026-08-07 障害と同型）。
+            # 通常モデル（thinking無し）へフォールバックして読み取りを完了させる
+            raise ValueError(
+                f"{CLAUDE_VISION_MODEL} の応答が max_tokens 上限に達して"
+                "途中で切れました")
+        return response
+    except (ValueError, anthropic.BadRequestError,
+            anthropic.NotFoundError, anthropic.PermissionDeniedError) as e:
+        # 400=組織のデータ保持設定等 / 404=モデル未提供 / 403=権限なし /
+        # ValueError=refusal。レート制限・一時障害は上位のリトライに任せる
+        if CLAUDE_VISION_MODEL == CLAUDE_MODEL:
+            raise
+        logger.warning(
+            "画像読み取りモデル %s が利用できないため %s にフォールバックします: %s",
+            CLAUDE_VISION_MODEL, CLAUDE_MODEL, e)
+        return _send_vision_request(
+            client, CLAUDE_MODEL, content, temperature, system)
+
+
+def _send_vision_request(client, model: str, content: list[dict],
+                         temperature: float, system: str = None):
+    """モデルごとのAPI仕様差を吸収して messages.create を呼ぶ。"""
+    kwargs = {
+        "model": model,
+        "messages": [{"role": "user", "content": content}],
+    }
+    if system:
+        kwargs["system"] = system
+    if model.startswith(_NO_TEMPERATURE_MODEL_PREFIXES):
+        # thinking 常時ONのモデルは max_tokens が thinking+本文の合計上限に
+        # なるため、抽出JSON（数千トークン）が途切れないよう余裕を持たせる。
+        # 20000 は SDK の非ストリーミング上限（約21,333）未満の最大級の値
+        kwargs["max_tokens"] = 20000
+    else:
+        kwargs["max_tokens"] = 8192
+        kwargs["temperature"] = temperature
+    return client.messages.create(**kwargs)
+
+
+def _first_text_block(response) -> str:
+    """応答からテキストブロックを取り出す。
+
+    thinking 常時ONのモデル（Fable等）は content 先頭が thinking ブロックの
+    ことがあるため、content[0].text の決め打ちはできない。
+    """
+    for block in response.content:
+        if getattr(block, "type", "") == "text":
+            return block.text
+    raise ValueError("APIの応答にテキストが含まれていません")
 
 
 def _extract_json(text: str) -> str:

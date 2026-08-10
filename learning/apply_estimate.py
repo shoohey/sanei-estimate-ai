@@ -42,6 +42,13 @@ CATEGORY_TO_LIST = {
     "付帯工事": "additional_items",
 }
 
+# panel_rate（枚数連動）項目に適用できる学習単価の上限。
+# 正規見積の「一式 ¥1,112,400」を単価として学習した不正ルールが枚数連動項目に
+# 入ると 266枚×¥1,112,400=¥2.96億 の事故になる（2026-08-10 実障害）。
+# 1枚単価は数千円のオーダーのため、これを超える値は単位取り違えとみなして
+# 適用しない（basis_quantity_unit を持たない旧形式ルールへの防御）。
+PANEL_RATE_MAX_UNIT_PRICE = 100_000
+
 
 # =============================================================
 # 内部ユーティリティ
@@ -106,6 +113,31 @@ def _apply_price_override(rules: dict, rule: dict) -> None:
                 rule.get("display_description") or match_desc)
             continue
         for item in candidates:  # 0件 or 1件
+            # panel_rate（枚数連動）項目は unit_price が「1枚あたり単価」。
+            # 別単位（式等）で学習された単価や桁違いの値を掛けると金額が
+            # 枚数倍に暴発するため、単位不一致・上限超過のルールは適用しない。
+            if item.get("pricing_method") == "panel_rate":
+                # 空文字は「単位不明」として扱い、単位照合はスキップして
+                # 下の単価上限ガードのみに委ねる（正当な単価の誤ブロック防止）
+                basis_unit = str((rule.get("payload", {}) or {}).get(
+                    "basis_quantity_unit") or "").strip() or None
+                item_unit = str(item.get("quantity_unit", "")).strip()
+                if basis_unit is not None and basis_unit != item_unit:
+                    logger.warning(
+                        "unit_price_override の学習元単位(%r)が枚数連動項目の"
+                        "単位(%r)と異なるため適用しません（id=%s, 摘要=%r）",
+                        basis_unit, item_unit, rule.get("id", "?"),
+                        rule.get("display_description") or match_desc)
+                    continue
+                if new_price > PANEL_RATE_MAX_UNIT_PRICE:
+                    logger.warning(
+                        "unit_price_override の学習単価 ¥%s が1枚単価の上限"
+                        "（¥%s）を超えており単位取り違えの疑いがあるため"
+                        "適用しません（id=%s, 摘要=%r）",
+                        f"{new_price:,}", f"{PANEL_RATE_MAX_UNIT_PRICE:,}",
+                        rule.get("id", "?"),
+                        rule.get("display_description") or match_desc)
+                    continue
             old_price = item.get("unit_price")
             if old_price == new_price:
                 continue  # 既に学習値（note の重複追記を防ぐ）

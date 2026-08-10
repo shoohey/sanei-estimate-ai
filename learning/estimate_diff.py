@@ -266,11 +266,55 @@ def diff_estimates(ai: ParsedEstimate, official: ParsedEstimate) -> list:
         match_remarks = normalize_desc(a.remarks)
 
         # 単価差分（支給品は常に¥0のため学習対象外）
-        if category != "支給品" \
+        #
+        # 数量単位が異なるペア（例: AI「266枚×¥2,178」と正規「1式 ¥1,112,400」）は
+        # 両者の「単価」の基準が違うため、正規側の単価をそのまま学習してはいけない
+        # （枚数連動項目に式単価が入り 266枚×¥1,112,400=¥2.96億 の事故になる）。
+        # 正規側の金額をAI側の数量で割り、AI側の単位あたり単価に換算して学習する。
+        # 換算に必要な情報が無い場合は参考表示に落とす。
+        a_unit = (a.quantity_unit or "").strip()
+        o_unit = (o.quantity_unit or "").strip()
+        unit_mismatch = bool(a_unit and o_unit and a_unit != o_unit)
+        o_price = o.unit_price
+        conv_note = ""
+        if unit_mismatch:
+            # 一式行は単価欄が空欄で金額のみのことが多いため、正規側の
+            # 単価の有無にかかわらず金額があれば換算する。
+            # 金額0以下は換算しない（案件固有の¥0行・値引行を恒久学習しない）
+            if o.amount is not None and o.amount > 0 and a.quantity_value \
+                    and a.quantity_value > 0:
+                o_price = int(round(o.amount / a.quantity_value))
+                o_qty_disp = (f"{_fmt_qty(o.quantity_value)}{o_unit} "
+                              if o.quantity_value is not None else "")
+                conv_note = (f"（正規 {o_qty_disp}"
+                             f"¥{o.amount:,} ÷ {_fmt_qty(a.quantity_value)}{a_unit}"
+                             f" で1{a_unit}単価に換算）")
+            else:
+                o_price = None  # 換算不能 → 下の参考表示分岐へ
+        if category != "支給品" and unit_mismatch and o_price is None \
                 and a.unit_price is not None and o.unit_price is not None \
                 and a.unit_price != o.unit_price:
-            summary = f"単価 ¥{a.unit_price:,} → ¥{o.unit_price:,}"
-            payload = {"unit_price": o.unit_price, "old_unit_price": a.unit_price}
+            diffs.append(EstimateDiffItem(
+                diff_type="price_changed",
+                category=category,
+                description=desc,
+                ai_item=a,
+                official_item=o,
+                match_score=score,
+                summary=(f"単価 ¥{a.unit_price:,}/{a_unit} → "
+                         f"¥{o.unit_price:,}/{o_unit}"
+                         "（数量単位が異なり換算もできないため参考表示）"),
+                learnable=False,
+                proposed_rule=None,
+            ))
+        elif category != "支給品" \
+                and a.unit_price is not None and o_price is not None \
+                and a.unit_price != o_price:
+            summary = f"単価 ¥{a.unit_price:,} → ¥{o_price:,}{conv_note}"
+            # 単価の基準単位。AI側が単位を落とした場合は正規側で補う
+            # （空文字を入れると apply 側の単位照合が正当な単価まで弾くため）
+            payload = {"unit_price": o_price, "old_unit_price": a.unit_price,
+                       "basis_quantity_unit": a_unit or o_unit}
             # 同名項目が複数ある場合、備考まで完全一致でペアリングでき、かつ
             # (カテゴリ, 摘要, 備考) が両側で一意なペアのみ学習可能とする
             has_dup = (ai_desc_count[_desc_key(a)] > 1
@@ -312,8 +356,11 @@ def diff_estimates(ai: ParsedEstimate, official: ParsedEstimate) -> list:
         # 数量差分（案件固有 → 参考表示のみ）
         qa, qo = a.quantity_value, o.quantity_value
         if qa is not None and qo is not None and abs(qa - qo) > _EPS:
+            # 単位は両側それぞれの表記で表示する（「266式 → 1式」の誤表示防止）
             unit = o.quantity_unit or a.quantity_unit
-            summary = (f"数量 {_fmt_qty(qa)}{unit} → {_fmt_qty(qo)}{unit}"
+            ua = a.quantity_unit or unit
+            uo = o.quantity_unit or unit
+            summary = (f"数量 {_fmt_qty(qa)}{ua} → {_fmt_qty(qo)}{uo}"
                        f"（案件固有のため参考表示）")
             diffs.append(EstimateDiffItem(
                 diff_type="quantity_changed",

@@ -44,6 +44,12 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 RETRY_DELAY_SEC = 2  # 待機秒 = RETRY_DELAY_SEC × 試行回数
 
+# 応答の最大トークン。明細行が多い帳票（原価表等）は応答が長くなり、
+# 上限に達すると JSON が途中で切れて全リトライが失敗する（temperature=0 のため
+# 同条件の再試行は同じ位置で切れる）。途中切れを検知したら CEILING まで引き上げて再試行する。
+MAX_OUTPUT_TOKENS = 32_000
+MAX_OUTPUT_TOKENS_CEILING = 64_000  # 安全側の実用上限（claude-sonnet-4-6 のモデル上限は128K）
+
 # テキスト層がこの文字数を超えていれば「テキスト→Claude」で処理（未満はVisionフォールバック）
 TEXT_LAYER_MIN_CHARS = 300
 
@@ -121,6 +127,10 @@ ESTIMATE_PARSE_PROMPT = """あなたは株式会社サンエーの太陽光発�
 - 全角数字は半角に変換してください
 - 読み取りが不確実な箇所は warnings に日本語で記載してください
 - JSON以外のテキスト（説明文・前置き・コメント）は一切含めないでください
+- 明細行が何行あっても省略せず、全行を items に含めてください
+  （「以下省略」「// 残りは同様」のような省略表現は禁止です）
+- 応答が長くなり途中で切れるのを防ぐため、JSONは改行・インデントなしの
+  コンパクト形式（1行）で出力してください
 """
 
 
@@ -296,34 +306,77 @@ def _call_claude_with_retry(content: list[dict]) -> dict:
     - temperature=0 で決定論的な出力（結果の再現性を確保）
     - 前置きやコードフェンス混じりの応答は _extract_json で除去・修復
       （_sanitize_json_str は _extract_json 内部で適用される）
+
+    明細行が多い帳票への防御:
+    - max_tokens が大きいと非ストリーミングは SDK の10分制限で拒否されるため
+      ストリーミングで受信する（Streamlit Cloud のHTTPタイムアウト回避も兼ねる）
+    - stop_reason=max_tokens（応答の途中切れ）は上限を引き上げて再試行し、
+      上限でも収まらない場合は原因が分かるメッセージで即時失敗する
+    - 途中切れによる上限引き上げはリトライ予算（MAX_RETRIES）を消費しない
+      （一時エラーの直後の最終試行で途中切れしても引き上げ再試行が実行されるように）
     """
     last_error = None
-    for attempt in range(1, MAX_RETRIES + 1):
+    max_tokens = MAX_OUTPUT_TOKENS
+    attempt = 1
+    while attempt <= MAX_RETRIES:
         try:
             client = anthropic.Anthropic(api_key=get_api_key())
-            response = client.messages.create(
+            with client.messages.stream(
                 model=CLAUDE_MODEL,
-                max_tokens=8192,
+                max_tokens=max_tokens,
                 temperature=0,
                 messages=[{"role": "user", "content": content}],
-            )
+            ) as stream:
+                response = stream.get_final_message()
             response_text = response.content[0].text
-            logger.info("見積パースAPI応答（試行%d）: %s...", attempt, response_text[:200])
+            logger.info(
+                "見積パースAPI応答（試行%d・stop_reason=%s・出力%dトークン）: %s...",
+                attempt, response.stop_reason, response.usage.output_tokens,
+                response_text[:200],
+            )
+        except anthropic.APIError as e:
+            last_error = e
+            logger.warning(
+                "見積パース試行 %d/%d - APIエラー: %s", attempt, MAX_RETRIES, e)
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY_SEC * attempt)  # 線形バックオフ（2秒→4秒）
+            attempt += 1
+            continue
+        except Exception as e:
+            last_error = e
+            logger.warning(
+                "見積パース試行 %d/%d - 予期せぬエラー: %s", attempt, MAX_RETRIES, e)
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY_SEC * attempt)
+            attempt += 1
+            continue
+
+        if response.stop_reason == "max_tokens":
+            # temperature=0 では同じ上限での再試行は同じ位置で切れるため、上限を上げる
+            last_error = RuntimeError(
+                f"応答が max_tokens={max_tokens} に達して途中で切れました（明細行が多い帳票）")
+            if max_tokens < MAX_OUTPUT_TOKENS_CEILING:
+                logger.warning(
+                    "応答が max_tokens=%d で途中切れ。上限を %d に引き上げて再試行します",
+                    max_tokens, MAX_OUTPUT_TOKENS_CEILING)
+                max_tokens = MAX_OUTPUT_TOKENS_CEILING
+                # 容量不足はAPI起因の一時エラーではないため、待機せず・attemptも消費せず再試行
+                # （2回目の途中切れは上の raise に到達するため無限ループにはならない）
+                continue
+            raise RuntimeError(
+                f"見積書の明細が多すぎるため、AI応答が上限（{MAX_OUTPUT_TOKENS_CEILING:,}トークン）に"
+                "収まりませんでした。\nPDFをページ分割して明細を減らしてから再度お試しください。"
+            )
+
+        try:
             return json.loads(_extract_json(response_text))
         except (json.JSONDecodeError, ValueError) as e:
             last_error = e
             logger.warning(
                 "見積パース試行 %d/%d - JSON解析エラー: %s", attempt, MAX_RETRIES, e)
-        except anthropic.APIError as e:
-            last_error = e
-            logger.warning(
-                "見積パース試行 %d/%d - APIエラー: %s", attempt, MAX_RETRIES, e)
-        except Exception as e:
-            last_error = e
-            logger.warning(
-                "見積パース試行 %d/%d - 予期せぬエラー: %s", attempt, MAX_RETRIES, e)
-        if attempt < MAX_RETRIES:
-            time.sleep(RETRY_DELAY_SEC * attempt)  # 線形バックオフ（2秒→4秒）
+            if attempt < MAX_RETRIES:
+                time.sleep(RETRY_DELAY_SEC * attempt)
+            attempt += 1
 
     raise RuntimeError(
         f"見積書のAI読み取りに{MAX_RETRIES}回失敗しました。\n"

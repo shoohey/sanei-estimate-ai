@@ -2,6 +2,14 @@
 # panel_layout.py の panel_dimensions_from_module() で参照される
 # long_m: 長辺 [m]、short_m: 短辺 [m]、weight_kg: 重量 [kg]
 panels:
+  # XSOL N型両面ガラス 510W水切型（2026-08 顧客図面①②で使用。
+  # 寸法はサンエー正規図面のモジュール詳細 1903×1134 より。重量は要確認）
+  - maker: XSOL
+    model_prefix: XLN120G
+    output_w: 510
+    long_m: 1.903
+    short_m: 1.134
+    weight_kg: 27.0
   - maker: Canadian Solar
     model_prefix: CS7L
     output_w: 660

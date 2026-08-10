@@ -23,12 +23,18 @@ _TIMEOUT = 10  # 秒。UI操作を待たせすぎない
 
 def _creds() -> tuple[str, str]:
     """Supabase 接続情報を st.secrets → 環境変数 → .env.local の順で取得する。"""
-    # pytest 実行中は Supabase を常に無効扱いにする。
+    # pytest 実行中・テストフラグ設定時は Supabase を常に無効扱いにする。
     # ローカルの .env.local に実クレデンシャルがあると、テストが本番の
     # 学習データ（app_storage 等）を読み書き・消去してしまうため。
     # テストは FakeSupabase（tests/test_storage_backend.py）でモジュール属性を
     # 差し替える方式なので、このガードの影響を受けない。
-    if "PYTEST_CURRENT_TEST" in os.environ:
+    #
+    # SANEI_DISABLE_SUPABASE: スクリプト式実行（python3 tests/xxx.py）では
+    # PYTEST_CURRENT_TEST が立たず、2026-08-10 にテスト実行が本番の共有
+    # 学習データ（learned_estimate_rules 等）を上書き・消去する事故が実発生した。
+    # store を触るテスト・検証スクリプトは import 前にこの環境変数を必ず立てること。
+    if "PYTEST_CURRENT_TEST" in os.environ \
+            or os.environ.get("SANEI_DISABLE_SUPABASE"):
         return "", ""
     url = key = ""
     try:

@@ -15,9 +15,15 @@
 store は一時ディレクトリに差し替えて実行する（実 knowledge/ を汚さない）。
 """
 import copy
+import os
 import sys
 import tempfile
 from pathlib import Path
+
+# 本番Supabase（共有学習データ）への書込をimport前に遮断する。
+# スクリプト実行では PYTEST_CURRENT_TEST が無く、.env.local の実クレデンシャルで
+# kv_set が本番 learned_drawing_rules を上書きする事故が実発生した（2026-08-10）。
+os.environ["SANEI_DISABLE_SUPABASE"] = "1"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

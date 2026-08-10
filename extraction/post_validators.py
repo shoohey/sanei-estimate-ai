@@ -47,6 +47,7 @@ TYPICAL_MODULE_OUTPUTS = [
 
 # 型式プレフィックス → メーカー名（日本市場で流通する主要モジュール）
 MODULE_MAKER_PREFIXES = {
+    "XLN": "XSOL",
     "CS": "Canadian Solar",
     "LR": "LONGi",
     "JKM": "Jinko",
@@ -60,6 +61,10 @@ MODULE_MAKER_PREFIXES = {
 
 # メーカー名の表記揺れ → 正規化先
 MAKER_NORMALIZATION = {
+    "xsol": "XSOL",
+    "エクソル": "XSOL",
+    "株式会社エクソル": "XSOL",
+    "xsol株式会社": "XSOL",
     "canadian solar": "Canadian Solar",
     "canadian solar inc.": "Canadian Solar",
     "canadian solar inc": "Canadian Solar",

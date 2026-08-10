@@ -27,6 +27,7 @@ import io
 import json
 import logging
 import os
+import re
 import time
 from typing import Optional
 
@@ -382,21 +383,16 @@ def _call_claude_api(content: list[dict], system_prompt: str, attempt: int,
         各種 anthropic 例外 / json.JSONDecodeError / ValueError（呼び出し側でリトライ判定）
     """
     import anthropic
-    from config import get_api_key, CLAUDE_MODEL
-    # JSON 抽出ロジックは既存実装を流用（重複実装を避ける）
-    from extraction.survey_extractor import _extract_json
+    from config import get_api_key
+    # JSON抽出・Visionモデル切替（CLAUDE_VISION_MODEL + Fable差分吸収 +
+    # フォールバック）は survey_extractor の実装を流用（重複実装を避ける）
+    from extraction.survey_extractor import (
+        _extract_json, _create_vision_message, _first_text_block)
 
     client = anthropic.Anthropic(api_key=get_api_key())
-    response = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=8192,
-        temperature=temperature,
-        system=system_prompt,
-        messages=[
-            {"role": "user", "content": content},
-        ],
-    )
-    response_text = response.content[0].text
+    response = _create_vision_message(
+        client, content, temperature, system=system_prompt)
+    response_text = _first_text_block(response)
     logger.info(f"Vision応答（試行{attempt}）: {response_text[:200]}...")
     json_str = _extract_json(response_text)
     return json.loads(json_str)
@@ -438,6 +434,18 @@ def _normalize_parsed(parsed: dict, drawing_type: str) -> tuple[dict, list[str],
                   "walkway_mm"):
             if k in panel:
                 panel[k] = _coerce_number(panel[k])
+        # 出力Wの補完: output_w が読み取れないと図面の設置容量が
+        # 「0.000kW」になる（2026-08-10 顧客提供図面①②で実発生）。
+        # 型式文字列に含まれるW数（例: XLN120G-510X → 510）から推定する。
+        if _coerce_number(panel.get("output_w", 0) or 0) <= 0:
+            guessed = _wattage_from_model(str(panel.get("model", "") or ""))
+            if guessed:
+                panel["output_w"] = float(guessed)
+                warnings.append(
+                    f"モジュール出力Wが読み取れなかったため、型式"
+                    f"「{panel.get('model')}」から {guessed}W と推定しました。"
+                    "確認してください。")
+                confidence["panel.output_w"] = "low"
 
     # ルート直下の数値（pcs_count / total_panels 等）も寛容変換し、
     # spec_from_dict の int() が "3台" 等で落ちて全抽出が失われるのを防ぐ。
@@ -499,6 +507,21 @@ def _normalize_parsed(parsed: dict, drawing_type: str) -> tuple[dict, list[str],
         d["roof_faces"] = []
 
     return d, warnings, confidence
+
+
+def _wattage_from_model(model: str) -> int:
+    """型式文字列からモジュール出力W数を推定する（例: XLN120G-510X → 510）。
+
+    3〜4桁の数値のうち実在するモジュール出力のレンジ（300〜750W）に
+    収まるものを候補とし、複数あれば最後のものを採用する
+    （NER108M465B → 465、LR7-72HVH-645M → 645）。該当なしは 0。
+    直後に V が続く数値は電圧表記（例: 600V）とみなして除外する。
+    """
+    if not model:
+        return 0
+    candidates = [int(s) for s in re.findall(r"\d{3,4}(?![0-9Vv])", model)]
+    candidates = [c for c in candidates if 300 <= c <= 750]
+    return candidates[-1] if candidates else 0
 
 
 def _coerce_number(val):

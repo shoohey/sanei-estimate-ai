@@ -20,9 +20,15 @@
 store は一時ディレクトリに差し替えて実行する（実 knowledge/ を汚さない）。
 """
 import copy
+import os
 import sys
 import tempfile
 from pathlib import Path
+
+# 本番Supabase（共有学習データ）への書込をimport前に遮断する。
+# スクリプト実行では PYTEST_CURRENT_TEST が無く、.env.local の実クレデンシャルで
+# kv_set が本番 learned_estimate_rules を上書きする事故が実発生した（2026-08-10）。
+os.environ["SANEI_DISABLE_SUPABASE"] = "1"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -154,7 +160,8 @@ def test_diff_price_changed():
     assert rule["category"] == "施工費"
     assert rule["match_description"] == normalize_desc("架台取付工事")
     assert rule["display_description"] == "架台取付工事"
-    assert rule["payload"] == {"unit_price": 3100, "old_unit_price": 3300}
+    assert rule["payload"] == {"unit_price": 3100, "old_unit_price": 3300,
+                               "basis_quantity_unit": "式"}
     ev = rule["evidence"]
     assert ev["project_name"] == "掛川店"
     assert ev["file_name"] == "正規見積.pdf"
@@ -320,7 +327,8 @@ def test_diff_dup_remarks_price_changed():
     rule = d.proposed_rule
     assert rule["match_remarks"] == normalize_desc("配管"), \
         "同名項目のルールには match_remarks が必須"
-    assert rule["payload"] == {"unit_price": 40000, "old_unit_price": 38000}
+    assert rule["payload"] == {"unit_price": 40000, "old_unit_price": 38000,
+                               "basis_quantity_unit": "式"}
 
     # apply: 同名5項目のうち備考一致の1項目だけ上書き、他4項目は不変
     _reset_store()
@@ -740,6 +748,113 @@ def test_knowledge_base_hook():
 # 実行
 # =============================================================
 
+def test_diff_unit_mismatch_converts_to_per_panel_price():
+    """AI「266枚×¥2,178」× 正規「1式 ¥1,112,400」→ 式単価をそのまま学習せず、
+    金額÷枚数で1枚単価（¥4,182）に換算して学習すること（2026-08-10 実障害の再発防止）。"""
+    ai = _estimate("ai", [
+        _item("施工費", 2, "架台取付工事", price=2178, qty=266, unit="枚"),
+    ])
+    official = _estimate("official", [
+        _item("施工費", 2, "架台取付工事", price=1112400, qty=1.0, unit="式"),
+    ])
+    diffs = diff_estimates(ai, official)
+    grouped = _by_type(diffs)
+    assert "price_changed" in grouped, "単価差分が検出されない"
+    d = grouped["price_changed"][0]
+    assert d.learnable and d.proposed_rule is not None
+    payload = d.proposed_rule["payload"]
+    assert payload["unit_price"] == 4182, \
+        f"¥1,112,400÷266枚=¥4,182 に換算されるはず: {payload}"
+    assert payload["basis_quantity_unit"] == "枚"
+    assert "換算" in d.summary, f"換算した旨がsummaryに出るはず: {d.summary}"
+    assert "1,112,400" not in str(payload["unit_price"]), "式単価をそのまま学習してはいけない"
+
+
+def test_diff_unit_mismatch_amount_only_converts():
+    """正規側が「一式・金額のみ・単価欄空」でも金額÷枚数で換算学習できること
+    （Codexレビュー指摘: 一式行は単価空欄が一般的な帳票形式）。"""
+    ai = _estimate("ai", [
+        _item("施工費", 2, "架台取付工事", price=2178, qty=266, unit="枚"),
+    ])
+    o_item = _item("施工費", 2, "架台取付工事", price=1112400, qty=1.0, unit="式")
+    o_item.unit_price = None  # 単価欄空欄・金額のみ（amount=1,112,400 は保持）
+    official = _estimate("official", [o_item])
+    diffs = diff_estimates(ai, official)
+    grouped = _by_type(diffs)
+    assert "price_changed" in grouped, "単価空欄でも金額から換算されるはず"
+    d = grouped["price_changed"][0]
+    assert d.learnable and d.proposed_rule is not None
+    assert d.proposed_rule["payload"]["unit_price"] == 4182
+
+
+def test_diff_unit_mismatch_without_amount_reference_only():
+    """単位不一致かつ正規側の金額が無く換算できない場合は参考表示に落ちること。"""
+    ai = _estimate("ai", [
+        _item("施工費", 2, "架台取付工事", price=2178, qty=266, unit="枚"),
+    ])
+    o_item = _item("施工費", 2, "架台取付工事", price=1112400, qty=1.0, unit="式")
+    o_item.amount = None  # 金額不明 → 換算不能
+    official = _estimate("official", [o_item])
+    diffs = diff_estimates(ai, official)
+    grouped = _by_type(diffs)
+    assert "price_changed" in grouped
+    d = grouped["price_changed"][0]
+    assert not d.learnable and d.proposed_rule is None
+    assert "参考表示" in d.summary
+
+
+def test_apply_panel_rate_unit_guard():
+    """panel_rate 項目への単価上書きガード:
+    ①学習元単位が違うルールは適用しない ②単位情報の無い旧形式ルールでも
+    上限（¥100,000/枚）超は適用しない ③正常な1枚単価は適用される。"""
+    def _panel_rules():
+        return {
+            "construction_items": [
+                {"no": 2, "description": "架台取付工事", "remarks": "",
+                 "quantity_source": "equipment.planned_panels",
+                 "quantity_unit": "枚", "unit_price": 2178,
+                 "pricing_method": "panel_rate",
+                 "fallback_unit_price_per_kw": 3300, "note": ""},
+            ],
+        }
+
+    # ① 学習元単位が「式」→ 枚数連動項目には適用しない
+    _reset_store()
+    store.add_rules("estimate", [
+        {"kind": "unit_price_override", "category": "施工費",
+         "match_description": normalize_desc("架台取付工事"),
+         "payload": {"unit_price": 4182, "old_unit_price": 2178,
+                     "basis_quantity_unit": "式"}},
+    ])
+    applied = apply_learned_rules(_panel_rules())
+    assert applied["construction_items"][0]["unit_price"] == 2178, \
+        "単位不一致ルールは適用されないはず"
+
+    # ② 旧形式（単位情報なし）でも ¥100,000/枚 超は単位取り違えとみなす
+    _reset_store()
+    store.add_rules("estimate", [
+        {"kind": "unit_price_override", "category": "施工費",
+         "match_description": normalize_desc("架台取付工事"),
+         "payload": {"unit_price": 1112400, "old_unit_price": 2178}},
+    ])
+    applied2 = apply_learned_rules(_panel_rules())
+    assert applied2["construction_items"][0]["unit_price"] == 2178, \
+        "¥1,112,400/枚 のような桁違い単価は適用されないはず（¥2.96億事故の防止）"
+
+    # ③ 正常な1枚単価（換算済み ¥4,182・単位一致）は適用される
+    _reset_store()
+    store.add_rules("estimate", [
+        {"kind": "unit_price_override", "category": "施工費",
+         "match_description": normalize_desc("架台取付工事"),
+         "payload": {"unit_price": 4182, "old_unit_price": 2178,
+                     "basis_quantity_unit": "枚"}},
+    ])
+    applied3 = apply_learned_rules(_panel_rules())
+    item = applied3["construction_items"][0]
+    assert item["unit_price"] == 4182, "正常な1枚単価は適用されるはず"
+    assert "学習補正" in item["note"]
+
+
 def main() -> bool:
     tests = [
         test_normalize_desc,
@@ -754,6 +869,10 @@ def main() -> bool:
         test_apply_suppress_dup_guard,
         test_diff_zero_amount_removed_not_learnable,
         test_diff_item_add_price_completion,
+        test_diff_unit_mismatch_converts_to_per_panel_price,
+        test_diff_unit_mismatch_amount_only_converts,
+        test_diff_unit_mismatch_without_amount_reference_only,
+        test_apply_panel_rate_unit_guard,
         test_apply_override_and_deepcopy,
         test_apply_lump_formula_excluded,
         test_apply_suppress,
