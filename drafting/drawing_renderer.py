@@ -227,7 +227,16 @@ def _build_figure(spec: DraftingSpec):
 # =============================================================
 
 def _ensure_panels(spec: DraftingSpec) -> None:
-    """panels 未配置の屋根面に簡易グリッドを敷く（本番は layout_engine 担当）。"""
+    """panels 未配置の屋根面に簡易グリッドを敷く（本番は layout_engine 担当）。
+
+    モジュール寸法が不明な場合は敷かない: 既定寸法（1762×1134）のダミー
+    グリッドが本番図面に「それらしい偽物」として描かれ、顧客に誤った配置図が
+    渡る事故が実発生したため（2026-08-11 分析）。寸法不明時は layout_engine
+    側が warnings を出し、図面はパネル無しで正直に出力される。
+    """
+    p = spec.panel
+    if (p.long_mm or 0) <= 0 or (p.short_mm or 0) <= 0:
+        return
     for face in spec.roof_faces:
         if face.panels:
             continue
@@ -287,9 +296,10 @@ def _fill_simple_grid(spec: DraftingSpec, face: RoofFace) -> None:
     # 隙間: 横方向(=列間)は gap_short、縦方向(=行間)は gap_long を使う
     grid_w = cols * pw + (cols - 1) * gap_short
     grid_h = rows * ph + (rows - 1) * gap_long
-    # 屋根中央に寄せる（左右・上下とも中央配置で安定させる）
-    x0 = (bw - grid_w) / 2.0
-    y0 = (bh - grid_h) / 2.0
+    # 屋根中央に寄せる（左右・上下とも中央配置で安定させる）。
+    # グリッドが屋根より大きい場合に負座標で外形からはみ出さないよう 0 で止める
+    x0 = max((bw - grid_w) / 2.0, 0.0)
+    y0 = max((bh - grid_h) / 2.0, 0.0)
 
     panels = []
     placed = 0

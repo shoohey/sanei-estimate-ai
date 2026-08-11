@@ -295,14 +295,24 @@ def _place_polygon_one(
     rects: List[PanelRect] = []
     for (x, y) in positions:
         # グリッドは外接矩形ローカル（min_x, min_y を 0 とした座標）で算出されている。
-        # 中心を外接矩形→ポリゴン絶対座標へ戻して内包判定する。
+        # 中心＋4隅を外接矩形→ポリゴン絶対座標へ戻して内包判定する。
+        # 中心1点のみの判定では斜辺・切欠き沿いでパネルの角が外形線を
+        # 最大で長辺の半分（約950mm）はみ出すため、4隅も判定する。
+        # 境界線上の判定揺れ対策として、隅は 0.5mm 内側に寄せて判定する。
         cx = min_x + x + panel_w / 2.0
         cy = min_y + y + panel_h / 2.0
-        if _point_in_polygon(cx, cy, polygon):
-            # 座標は屋根面ローカル（=外接矩形ローカル, 左上原点）でそのまま保持
+        eps = 0.5
+        px0, py0 = min_x + x + eps, min_y + y + eps
+        px1, py1 = min_x + x + panel_w - eps, min_y + y + panel_h - eps
+        points = ((cx, cy), (px0, py0), (px1, py0), (px0, py1), (px1, py1))
+        if all(_point_in_polygon(px, py, polygon) for px, py in points):
+            # 判定と同じ座標系（屋根面ローカル＝ポリゴン頂点と同じ原点）で格納する。
+            # 以前は外接矩形ローカル（x, y）のまま格納しており、頂点列が (0,0)
+            # 起点でない場合に描画が min_x/min_y 分ズレて外形からはみ出していた
             rects.append(
                 PanelRect(
-                    x_mm=x, y_mm=y, w_mm=panel_w, h_mm=panel_h, orientation=orientation
+                    x_mm=min_x + x, y_mm=min_y + y,
+                    w_mm=panel_w, h_mm=panel_h, orientation=orientation
                 )
             )
     return rows, cols, rects
@@ -482,6 +492,53 @@ def _assign_strings(spec: DraftingSpec) -> None:
 # 公開 API
 # =============================================================
 
+def _auto_arrange_faces(spec: DraftingSpec) -> None:
+    """屋根面の外接矩形（origin + bounds）同士が重なっていたら横並びに整列する。
+
+    抽出プロンプトが origin を取れなかった場合、全面が (0,0) 付近に重なって
+    「外形の二重描画・パネル行の交錯」になる（2026-08-11 分析）。重なりを
+    検出したら相対位置不明とみなし、面を左から間隔1500mmで並べ直して
+    warnings に記録する。重なりが無い（=抽出が位置関係を取れている）場合は
+    何も変更しない。
+    """
+    faces = [f for f in (spec.roof_faces or []) if f is not None]
+    if len(faces) < 2:
+        return
+
+    rects = []
+    for f in faces:
+        try:
+            w, d = f.bounds_mm()
+        except Exception:
+            w, d = 0.0, 0.0
+        rects.append((float(f.origin_x_mm or 0), float(f.origin_y_mm or 0),
+                      max(float(w or 0), 0.0), max(float(d or 0), 0.0)))
+
+    def _overlap(r1, r2) -> bool:
+        x1, y1, w1, h1 = r1
+        x2, y2, w2, h2 = r2
+        return x1 < x2 + w2 and x2 < x1 + w1 and y1 < y2 + h2 and y2 < y1 + h1
+
+    has_overlap = any(
+        _overlap(rects[i], rects[j])
+        for i in range(len(rects)) for j in range(i + 1, len(rects)))
+    if not has_overlap:
+        return
+
+    gap = 1500.0
+    x = 0.0
+    for f, (_, _, w, _) in zip(faces, rects):
+        f.origin_x_mm = x
+        f.origin_y_mm = 0.0
+        x += (w if w > 0 else 10000.0) + gap
+    try:
+        spec.warnings.append(
+            "屋根面同士の位置が重なっていたため横並びに自動整列しました。"
+            "面の相対位置（origin_x_mm / origin_y_mm）を確認してください。")
+    except Exception:
+        pass
+
+
 def place_panels(spec: DraftingSpec) -> DraftingSpec:
     """DraftingSpec の各屋根面にパネル座標を割り付けて返す（in-place）。
 
@@ -502,6 +559,34 @@ def place_panels(spec: DraftingSpec) -> DraftingSpec:
     panel = spec.panel or PanelSpec()
     faces = spec.roof_faces or []
 
+    # --- 入力ガード: モジュール寸法が無いと全面0枚のサイレント失敗になり、
+    # 描画側のフォールバックが既定寸法のダミーグリッドを「それらしい図面」として
+    # 出してしまう（2026-08-11 分析で顧客提供図面2件の直接原因と確定）。
+    # 配置をスキップし、warning で必ず表面化させる。
+    if (panel.long_mm or 0) <= 0 or (panel.short_mm or 0) <= 0:
+        for face in faces:
+            if face is None:
+                continue
+            face.panels = []
+            face.rows = 0
+            face.cols = 0
+            face.panel_count = 0
+        try:
+            spec.warnings.append(
+                "モジュール寸法（長辺/短辺）が読み取れていないため、パネルを配置"
+                "できません。モジュール型式・寸法を確認して再生成してください。")
+        except Exception:
+            pass
+        # recompute_totals は panel_count=0 のとき target 合計へフォールバック
+        # するため使わない: パネル0枚の図面に「16枚/8.16kW」等の注記が残ると
+        # 誤解を招く（Codexレビュー指摘）。ここでは正直に0とする
+        spec.total_panels = 0
+        spec.total_kw = 0.0
+        return spec
+
+    # --- 屋根面同士の重なり検出→自動整列（抽出originの衝突対策） ---
+    _auto_arrange_faces(spec)
+
     effective_panels = []  # 各面で実際に使った隙間（凡例表示との整合用）
     for face in faces:
         if face is None:
@@ -510,6 +595,13 @@ def place_panels(spec: DraftingSpec) -> DraftingSpec:
             eff_panel = _apply_roof_type_defaults(face, panel)
             effective_panels.append(eff_panel)
             _layout_face(face, eff_panel)
+            # 目標枚数に届かない配置は見積枚数のズレに直結するため必ず警告する
+            tgt = int(face.target_panel_count or 0)
+            if tgt > 0 and face.panel_count < tgt:
+                spec.warnings.append(
+                    f"面『{face.name or '?'}』: 目標{tgt}枚に対し"
+                    f"{face.panel_count}枚しか配置できません。"
+                    "屋根寸法・離隔・点検通路の設定を確認してください。")
         except Exception as exc:  # 1 面の失敗で全体を止めない
             # 当該面は空配置として続行し、所見に残す
             face.panels = []

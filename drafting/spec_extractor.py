@@ -304,21 +304,38 @@ def build_user_prompt(drawing_type: str = DrawingType.LAYOUT, hint: str = "") ->
      （瓦→kawara、スレート/コロニアル/カラーベスト→slate）
    - 形状（矩形 rectangle / 多角形 polygon）と寸法 幅mm・奥行mm（多角形なら頂点列 polygon_mm）
    - その面の設置枚数（target_panel_count。資料に枚数の記載が無ければ null —
-     その場合は屋根面に収まる最大枚数を自動配置する。推定枚数を入れないこと）
+     その場合は屋根面に収まる最大枚数を自動配置する。推定枚数を入れないこと。
+     「16枚」のような枚数ラベルが屋根の区画ごとに書かれている場合は、
+     区画ごとに別の roof_face に分けて出力する〔1面=1枚数ラベル〕）
+   - 面の位置（origin_x_mm / origin_y_mm）: 複数面がある場合、資料上の面同士の
+     位置関係（どちらが右/下か・面の間の距離）を図面上でも再現したいので、
+     読み取れる範囲で設定する。位置関係が読み取れない場合は面同士が重ならない
+     よう（例: 面2は面1の右に「面1の幅＋2000mm」）ずらして並べ、warnings に
+     「面の相対位置は仮配置」と記載する
    - パネルの向き（縦置き portrait / 横置き landscape）
    - 屋根端・軒・ケラバからの離隔の記載（例「離隔500」「端部より500逃げ」）があれば
      margin_mm へ。アレイ間・段間の間隔（長辺側隙間）の記載があれば
      panel.gap_long_mm（行間・段と段の間）へ
-4. 架台種別（mount_type）
-5. PCS（パワコン）の型番・台数（pcs_model, pcs_count）
-6. ストリング系統（◯直×◯並。例「12直×5並」）→ strings（PCSごと）
-7. 図番・作成日・縮尺など（title）
+4. 総枚数・設置容量: 「68枚」「設置容量:34.68kW(68枚)」等の記載があれば
+   total_panels / total_kw に転記する。各面 target_panel_count の合計が総枚数と
+   一致するか、また kW ÷ モジュール出力W ≒ 枚数になるかを検算し、一致しない
+   場合はどちらを採用したかと差分を warnings に記載する
+5. 架台種別（mount_type）
+6. PCS（パワコン）の型番・台数（pcs_model, pcs_count）
+7. ストリング系統（◯直×◯並。例「12直×5並」）→ strings（PCSごと）
+8. 図番・作成日・縮尺など（title）
 
 【寸法・向きの単位ルール】
 - すべて mm。m/cm 表記は mm に換算。
-- 屋根面ローカル座標は 左上原点・x=右・y=下。多角形 polygon_mm は閉じない頂点列 [[x,y],...]。
+- 屋根面ローカル座標は 左上原点・x=右・y=下。多角形 polygon_mm は閉じない頂点列 [[x,y],...]
+  （頂点は最小x・最小yが 0 になるよう平行移動して 0 起点で出力する）。
+- 寸法線は、その線がどの辺・区間を指すか（矢印・引出線の範囲）を確認してから採用する。
+  部分寸法の列（例: 2500+5241+6559）と全体寸法（14300）が両方ある場合は合計の一致を
+  検算し、合わない読み取りは採用せず warnings に記載する。折板屋根で同じスパン寸法
+  （例: 3816）が繰り返し並ぶ場合、屋根幅はその繰り返しの合計。
 - 折板屋根は通常パネル縦置き（portrait）・縦ハッチング、瓦/スレートは横ハッチングが多い。
-- 読めない寸法は 0 / null。推定値を入れず warnings に「面Xの奥行が判読不能」等を記載。
+- 読めない寸法はキーを省略するか null にする（0 と書くのは「0mm」と明記されている
+  場合のみ）。推定値を入れず warnings に「面Xの奥行が判読不能」等を記載。
 
 【屋根種別 roof_type の取りうる値】
 {roof_type_lines}
@@ -335,7 +352,12 @@ drafting/models.py の DraftingSpec の dict 構造に厳密準拠した JSON �
 - confidence は主要フィールド名→"high"/"medium"/"low" の辞書。手書きで曖昧な値は "low"。
 - warnings は人間が確認すべき点（手書き寸法の読み取り曖昧箇所、判読不能項目など）の文字列配列。
 - drawing_type は必ず "{dtype}" にしてください。
-- 不明な項目は既定値（文字列は ""、数値は 0、配列は []）にしてください。
+- gap_long_mm / gap_short_mm / margin_mm / walkway_mm / パネル寸法（long_mm,
+  short_mm）は、資料に明記が無い場合は**キー自体を出力しない**でください
+  （キーが無ければ屋根種別ごとの標準値が使われます。0 を書くのは「0mm」と
+  明記されている場合のみ。不明を 0 にすると隙間ゼロ・寸法ゼロとして扱われ、
+  配置計算が壊れます）。
+- その他の不明な項目は、文字列は ""、配列は []、数値は null にしてください。
 {hint_block}
 【正解出力例1（住宅・瓦・配置図・横置き10枚。単一屋根面・系統なし）】
 ```json
@@ -348,6 +370,9 @@ drafting/models.py の DraftingSpec の dict 構造に厳密準拠した JSON �
 ```
 {learned_block}
 上記の例と同じキー構造で、今回の画像から読み取った JSON を返してください。
+※例では confidence / warnings を簡略化していますが、実際の出力では手書きの
+読み取りに少しでも迷った項目（寸法・枚数・角度・施主名の漢字・型番など）を
+必ず confidence（"low"/"medium"）と warnings に挙げてください。
 panels（座標）は空配列 [] のままで構いません（配置計算は別工程で行います）。
 JSON 以外のテキストは一切出力しないでください。"""
 
@@ -446,6 +471,28 @@ def _normalize_parsed(parsed: dict, drawing_type: str) -> tuple[dict, list[str],
                     f"「{panel.get('model')}」から {guessed}W と推定しました。"
                     "確認してください。")
                 confidence["panel.output_w"] = "low"
+        # パネル寸法の補完: 寸法0のまま配置に進むと0枚配置になり、旧実装では
+        # 描画側が既定寸法のダミーグリッドを描く事故だった（2026-08-11 分析）。
+        # 型式マスター（knowledge/panel_dimensions.yaml）/W数典型値から補完する。
+        watt = _coerce_number(panel.get("output_w", 0) or 0)
+        long_v = _coerce_number(panel.get("long_mm", 0) or 0)
+        short_v = _coerce_number(panel.get("short_mm", 0) or 0)
+        if (long_v <= 0 or short_v <= 0) and watt > 0:
+            try:
+                from roof.panel_layout import panel_dimensions_from_module
+                long_m, short_m = panel_dimensions_from_module(
+                    str(panel.get("maker", "") or ""),
+                    str(panel.get("model", "") or ""), watt)
+            except Exception:
+                long_m = short_m = 0
+            if long_m and short_m:
+                panel["long_mm"] = float(round(long_m * 1000))
+                panel["short_mm"] = float(round(short_m * 1000))
+                warnings.append(
+                    f"モジュール寸法が読み取れなかったため、型式・出力Wから "
+                    f"{int(panel['long_mm'])}×{int(panel['short_mm'])}mm と"
+                    "推定しました。確認してください。")
+                confidence["panel.dimensions"] = "low"
 
     # ルート直下の数値（pcs_count / total_panels 等）も寛容変換し、
     # spec_from_dict の int() が "3台" 等で落ちて全抽出が失われるのを防ぐ。
@@ -505,6 +552,30 @@ def _normalize_parsed(parsed: dict, drawing_type: str) -> tuple[dict, list[str],
     elif faces is not None:
         warnings.append("roof_faces が配列ではありませんでした。屋根面情報を確認してください。")
         d["roof_faces"] = []
+
+    # --- 枚数・容量の検算（30/68枚事故の再発防止。2026-08-11 分析） ---
+    # 面ごと枚数の合計 vs 総枚数、kW÷W vs 総枚数 の不一致は配置枚数事故の
+    # 前兆のため、warning で必ず表面化させる。
+    total_panels = int(_coerce_number(d.get("total_panels", 0) or 0))
+    target_sum = sum(
+        int(_coerce_number(f.get("target_panel_count") or 0))
+        for f in (d.get("roof_faces") or []) if isinstance(f, dict))
+    if total_panels > 0 and target_sum > 0 and total_panels != target_sum:
+        warnings.append(
+            f"面ごとの枚数合計（{target_sum}枚）と総枚数（{total_panels}枚）が"
+            "一致しません。屋根面の分け方・枚数ラベルを確認してください。")
+        confidence["total_panels"] = "low"
+    total_kw = _coerce_number(d.get("total_kw", 0) or 0)
+    watt_chk = 0.0
+    if isinstance(d.get("panel"), dict):
+        watt_chk = _coerce_number(d["panel"].get("output_w", 0) or 0)
+    if total_kw > 0 and watt_chk > 0 and total_panels > 0:
+        kw_calc = total_panels * watt_chk / 1000.0
+        if abs(kw_calc - total_kw) > max(0.02 * total_kw, 0.01):
+            warnings.append(
+                f"設置容量の記載（{total_kw}kW）と 枚数×出力W の計算値"
+                f"（{kw_calc:.3f}kW）が一致しません。枚数・型式を確認してください。")
+            confidence["total_kw"] = "low"
 
     return d, warnings, confidence
 
@@ -570,6 +641,9 @@ def _auto_confidence(spec: DraftingSpec) -> dict:
         conf["panel.model"] = "low"
     if spec.panel.output_w <= 0:
         conf["panel.output_w"] = "low"
+    if spec.panel.long_mm <= 0 or spec.panel.short_mm <= 0:
+        # 寸法不明のままだと配置不能（place_panels がスキップして警告する）
+        conf["panel.dimensions"] = "low"
     if not spec.roof_faces:
         conf["roof_faces"] = "low"
     return conf
