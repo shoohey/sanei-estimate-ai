@@ -39,6 +39,11 @@ _EXCLUDED_KEYWORDS = ("値引", "小計", "合計", "消費税", "総計")
 # 対応リストが無いため学習対象外。apply_estimate.CATEGORY_TO_LIST と対）
 _ADDABLE_CATEGORIES = tuple(c for c in ESTIMATE_CATEGORIES if c != "特記事項")
 
+# 項目構成（どの項目が載るか）を学習で変更しないカテゴリ（2026-08-13 顧客要望）。
+# 例外案件の item_add / item_suppress がデフォルト化する事故を防ぐ。
+# 単価学習（unit_price_override）は引き続き対象。
+_FIXED_STRUCTURE_CATEGORIES = ("支給品", "材料費")
+
 # 同一カテゴリ内に同名（正規化摘要が同一）項目が複数ある場合の注記
 _DUP_NOTE = "（同名項目が複数あるため自動学習の対象外）"
 
@@ -385,6 +390,23 @@ def diff_estimates(ai: ParsedEstimate, official: ParsedEstimate) -> list:
         detail = "・".join(x for x in (qty_disp, price_disp) if x)
         summary = f"項目追加 「{o.description}」" + (f"（{detail}）" if detail else "")
 
+        # 支給品・材料費は項目構成を学習で変えない（2026-08-13 顧客要望）。
+        # 例外案件（材料が多い/支給品が無い等）の構成がデフォルト化する事故を防ぐ。
+        # 項目の載せ替えは見積プレビューの「支給品の選択」で案件ごとに行い、
+        # 学習は単価（unit_price_override）のみを対象とする。
+        if category in _FIXED_STRUCTURE_CATEGORIES:
+            diffs.append(EstimateDiffItem(
+                diff_type="item_added",
+                category=category,
+                description=o.description,
+                official_item=o,
+                summary=summary + "（支給品・材料費の項目構成は学習で変更しません。"
+                                  "単価のみ学習対象です）",
+                learnable=False,
+                proposed_rule=None,
+            ))
+            continue
+
         if category not in _ADDABLE_CATEGORIES:
             # 反映先リストを特定できない → 参考表示
             reason = "（特記事項は参考表示）" if category == "特記事項" \
@@ -450,6 +472,21 @@ def diff_estimates(ai: ParsedEstimate, official: ParsedEstimate) -> list:
         match_desc = normalize_desc(a.description)
         match_remarks = normalize_desc(a.remarks)
         summary = f"項目削除 「{a.description}」（AI見積のみに存在）"
+
+        # 支給品・材料費は項目構成を学習で変えない（2026-08-13 顧客要望。
+        # 「支給品が全く無い」例外案件の学習で既定の支給品が消える事故を防ぐ）
+        if category in _FIXED_STRUCTURE_CATEGORIES:
+            diffs.append(EstimateDiffItem(
+                diff_type="item_removed",
+                category=category,
+                description=a.description,
+                ai_item=a,
+                summary=summary + "（支給品・材料費の項目構成は学習で変更しません。"
+                                  "単価のみ学習対象です）",
+                learnable=False,
+                proposed_rule=None,
+            ))
+            continue
 
         if category == "特記事項":
             # 特記事項は pricing_rules.yaml に対応リストが無い → 参考表示

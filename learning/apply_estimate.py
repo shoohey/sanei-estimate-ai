@@ -42,6 +42,13 @@ CATEGORY_TO_LIST = {
     "付帯工事": "additional_items",
 }
 
+# 項目構成（どの項目が載るか）を学習で変更しないカテゴリ（2026-08-13 顧客要望）。
+# 例外案件で学習された item_add / item_suppress がデフォルト化し、
+# 「材料が異常に多い」「支給品が全く無い」構成が全案件に波及した実害への対処。
+# 過去に保存済みのルールもここで適用スキップされる（削除は学習センターUIから）。
+FIXED_STRUCTURE_CATEGORIES = ("支給品", "材料費")
+_FIXED_STRUCTURE_LISTS = ("supplied_items", "material_items")
+
 # panel_rate（枚数連動）項目に適用できる学習単価の上限。
 # 正規見積の「一式 ¥1,112,400」を単価として学習した不正ルールが枚数連動項目に
 # 入ると 266枚×¥1,112,400=¥2.96億 の事故になる（2026-08-10 実障害）。
@@ -156,7 +163,15 @@ def _apply_suppress(rules: dict, rule: dict) -> None:
     match_desc = rule.get("match_description", "")
     if not match_desc:
         return
+    if rule.get("category", "") in FIXED_STRUCTURE_CATEGORIES:
+        logger.info(
+            "item_suppress は支給品・材料費には適用しません（項目構成は学習で"
+            "変更しない方針。id=%s, 摘要=%r）",
+            rule.get("id", "?"), rule.get("display_description") or match_desc)
+        return
     for list_name in _target_list_names(rule.get("category", "")):
+        if list_name in _FIXED_STRUCTURE_LISTS:
+            continue  # カテゴリ不明ルールの全リスト適用からも支給品・材料費は除外
         lst = rules.get(list_name)
         if not lst:
             continue
@@ -182,6 +197,13 @@ def _apply_add(rules: dict, rule: dict) -> None:
     """item_add: 対象カテゴリのリスト末尾に fixed 項目を追加する。"""
     payload = rule.get("payload", {}) or {}
     category = payload.get("category") or rule.get("category", "")
+    if category in FIXED_STRUCTURE_CATEGORIES:
+        logger.info(
+            "item_add は支給品・材料費には適用しません（項目構成は学習で"
+            "変更しない方針。id=%s, 摘要=%r）",
+            rule.get("id", "?"),
+            payload.get("description") or rule.get("display_description", ""))
+        return
     list_name = CATEGORY_TO_LIST.get(category)
     if not list_name:
         # 追加先を特定できない item_add は適用しない（安全側）

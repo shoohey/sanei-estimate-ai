@@ -124,297 +124,60 @@ supplied_items:
 # 2. 材料費
 # =====================================================
 material_items:
-  # --- PVケーブル間 ---
+  # 2026-08-13 顧客要望: 材料費の基本項目は
+  # ブレーカー / スペースボックス / 電線 / 配管 / 配管 のみとする。
+  # モジュール・架台・PCS等の製品は「支給品の選択」で非支給にした場合に
+  # 単価マスターの価格で自動追加される（pricing/supply_selection.py）。
+  # 単価が案件ごとに変わる項目は is_manual（手動入力）とし、学習センターの
+  # 単価学習（unit_price_override）で補正されていく。
   - "no": 1
-    description: "PVケーブル間"
-    remarks: "配管　VE54"
-    quantity: "2"
-    quantity_unit: "式"
-    unit_price: 38000
-    pricing_method: "fixed"
-    note: "PVケーブル配管"
-
-  - "no": 2
-    description: "PVケーブル間"
-    remarks: "上記付属品"
+    description: "ブレーカー"
+    remarks: "MCB　200A　3P"
     quantity: "1"
     quantity_unit: "式"
-    unit_price: 86000
-    pricing_method: "fixed"
-    note: "PVケーブル配管付属品"
-
-  - "no": 3
-    description: "PVケーブル間"
-    remarks: "雑材"
-    quantity: "1"
-    quantity_unit: "式"
-    unit_price: 33000
-    pricing_method: "fixed"
-    note: "PVケーブル配管雑材"
-
-  - "no": 4
-    description: "PVケーブル間"
-    remarks: "ケーブルラック"
-    quantity_formula: "max(30, (separation_ns_mm + separation_ew_mm) / 1000 * 1.2)"
-    quantity_unit: "m"
-    unit_price: 15800
-    pricing_method: "distance"
-    note: "離隔距離から算出（最小30m）"
-
-  - "no": 5
-    description: "PVケーブル間"
-    remarks: "上記付属品"
-    quantity: "1"
-    quantity_unit: "式"
-    unit_price: 52600
-    pricing_method: "fixed"
-    note: "ケーブルラック付属品"
-
-  # --- PCS～QB間 ---
-  - "no": 6
-    description: "PCS～QB間"
-    remarks: "ケーブル　CV-T　60sq"
-    quantity_formula: "max(50, (separation_ns_mm + separation_ew_mm) / 1000 * 2.0)"
-    quantity_unit: "m"
-    unit_price: 11600
-    pricing_method: "distance"
-    note: "離隔距離から算出（最小50m）"
-
-  - "no": 7
-    description: "PCS～QB間"
-    remarks: "配管VE54、VE28"
-    quantity: "1"
-    quantity_unit: "式"
-    unit_price: 860
-    pricing_method: "fixed"
-    note: "PCS～QB間配管"
-
-  - "no": 8
-    description: "PCS～QB間"
-    remarks: "上記付属品"
-    quantity: "1"
-    quantity_unit: "式"
-    unit_price: 63100
-    pricing_method: "fixed"
-    note: "PCS～QB間付属品"
-
-  # --- PCS～ダウントランス間 ---
-  - "no": 9
-    description: "PCS～ダウントランス間"
-    remarks: "ケーブル　CV-3c　22sq"
-    quantity_formula: "max(30, (separation_ns_mm + separation_ew_mm) / 1000 * 1.2)"
-    quantity_unit: "m"
-    unit_price: 8600
-    pricing_method: "distance"
-    note: "離隔距離から算出（最小30m）"
-
-  - "no": 10
-    description: "PCS～ダウントランス間"
-    remarks: "配管　PFD管　36φ"
-    quantity: "2"
-    quantity_unit: "巻"
-    unit_price: 7200
-    pricing_method: "fixed"
-    note: "PCS～DT間配管"
-
-  - "no": 11
-    description: "PCS～ダウントランス間"
-    remarks: "上記付属品"
-    quantity: "1"
-    quantity_unit: "式"
-    unit_price: 46000
-    pricing_method: "fixed"
-    note: "PCS～DT間付属品"
-
-  # --- 接地材料 ---
-  - "no": 12
-    description: "接地材料"
-    remarks: "電線　IV　5.5sq"
-    quantity_formula: "max(200, pv_capacity_kw * 1.1)"
-    quantity_unit: "m"
-    unit_price: 660
-    pricing_method: "distance"
-    note: "PV容量連動（最小200m）"
-
-  - "no": 13
-    description: "接地材料"
-    remarks: "パネル間アース線　アースボンド線取付金具"
-    quantity: "1"
-    quantity_unit: "式"
-    unit_price: 35600
-    pricing_method: "fixed"
-    note: "パネル間アース"
-
-  - "no": 14
-    description: "接地材料"
-    remarks: "雑材"
-    quantity: "1"
-    quantity_unit: "式"
-    unit_price: 7200
-    pricing_method: "fixed"
-    note: "接地材料雑材"
-
-  - "no": 15
-    description: "接地材料"
-    remarks: "電線　IV　22sq"
-    quantity_formula: "max(30, (separation_ns_mm + separation_ew_mm) / 1000 * 1.2)"
-    quantity_unit: "m"
-    unit_price: 2700
-    pricing_method: "distance"
-    note: "離隔距離から算出（最小30m）"
-
-  - "no": 16
-    description: "接地材料"
-    remarks: "電線　IV　14sq"
-    quantity_formula: "max(30, (separation_ns_mm + separation_ew_mm) / 1000 * 1.2)"
-    quantity_unit: "m"
-    unit_price: 2500
-    pricing_method: "distance"
-    note: "離隔距離から算出（最小30m）"
-
-  # --- 集電BOX ---
-  - "no": 17
-    description: "集電BOX"
-    remarks: "ブレーカー用BOX　プラBOX"
-    quantity: "1"
-    quantity_unit: "面"
-    unit_price: 42800
-    pricing_method: "fixed"
-    note: "集電BOXプラBOX"
-
-  - "no": 18
-    description: "集電BOX"
-    remarks: "ブレーカー　MCB　200A　3P"
-    quantity: "3"
-    quantity_unit: "台"
     unit_price: 51000
     pricing_method: "fixed"
-    note: "集電BOXブレーカー"
+    note: "集電盤用ブレーカー"
 
-  - "no": 19
-    description: "集電BOX"
-    remarks: "スマートロガー用BOX　プラBOX"
-    quantity: "1"
-    quantity_unit: "面"
-    unit_price: 11000
-    pricing_method: "fixed"
-    note: "スマートロガー用BOX"
-
-  - "no": 20
-    description: "集電BOX"
-    remarks: "上記付属品"
-    quantity: "1"
-    quantity_unit: "式"
-    unit_price: 4600
-    pricing_method: "fixed"
-    note: "集電BOX付属品"
-
-  - "no": 21
-    description: "集電BOX"
-    remarks: "雑材"
-    quantity: "1"
-    quantity_unit: "式"
-    unit_price: 7600
-    pricing_method: "fixed"
-    note: "集電BOX雑材"
-
-  # --- キュービクル内部材（キュービクルあり時のみ計上） ---
-  - "no": 22
-    description: "キュービクル内部材"
-    remarks: "電線　KIV100sq"
-    quantity_formula: "max(26, (separation_ns_mm + separation_ew_mm) / 1000 * 1.0)"
-    quantity_unit: "m"
-    unit_price: 11000
-    pricing_method: "distance"
-    condition: "supplementary.cubicle_location == true"
-    note: "離隔距離から算出（最小26m）キュービクルあり時"
-
-  - "no": 23
-    description: "キュービクル内部材"
-    remarks: "クリート　ケーブル押さえ"
-    quantity: "1"
-    quantity_unit: "式"
-    unit_price: 2500
-    pricing_method: "fixed"
-    condition: "supplementary.cubicle_location == true"
-    note: "キュービクル内クリート"
-
-  - "no": 24
-    description: "キュービクル内部材"
-    remarks: "雑材"
-    quantity: "1"
-    quantity_unit: "式"
-    unit_price: 12900
-    pricing_method: "fixed"
-    condition: "supplementary.cubicle_location == true"
-    note: "キュービクル内雑材"
-
-  - "no": 25
-    description: "キュービクル内部材"
-    remarks: "ステイ"
-    quantity: "1"
-    quantity_unit: "式"
-    unit_price: 6300
-    pricing_method: "fixed"
-    condition: "supplementary.cubicle_location == true"
-    note: "キュービクル内ステイ"
-
-  - "no": 26
-    description: "キュービクル内部材"
-    remarks: "ボルトナット類"
-    quantity: "1"
-    quantity_unit: "式"
-    unit_price: 3400
-    pricing_method: "fixed"
-    condition: "supplementary.cubicle_location == true"
-    note: "キュービクル内ボルトナット"
-
-  - "no": 27
-    description: "キュービクル内部材"
-    remarks: "L型アングル"
-    quantity: "1"
-    quantity_unit: "式"
-    unit_price: 9100
-    pricing_method: "fixed"
-    condition: "supplementary.cubicle_location == true"
-    note: "キュービクル内L型アングル"
-
-  # --- 通信線 ---
-  - "no": 28
-    description: "通信線"
-    remarks: "ケーブル　FCPEV-0.9　2c"
-    quantity_formula: "max(30, (separation_ns_mm + separation_ew_mm) / 1000 * 1.2)"
-    quantity_unit: "m"
-    unit_price: 340
-    pricing_method: "distance"
-    note: "離隔距離から算出（最小30m）"
-
-  - "no": 29
-    description: "通信線"
-    remarks: "配管　PFD管　22φ"
-    quantity_formula: "max(50, (separation_ns_mm + separation_ew_mm) / 1000 * 2.0)"
-    quantity_unit: "m"
-    unit_price: 240
-    pricing_method: "distance"
-    note: "離隔距離から算出（最小50m）"
-
-  - "no": 30
-    description: "通信線"
-    remarks: "上記付属品"
-    quantity: "1"
-    quantity_unit: "式"
-    unit_price: 7600
-    pricing_method: "fixed"
-    note: "通信線付属品"
-
-  # --- その他 ---
-  - "no": 31
-    description: "その他雑材費"
+  - "no": 2
+    description: "スペースボックス"
     remarks: ""
-    quantity_formula: "max(110000, pv_capacity_kw * 600)"
+    quantity: "1"
     quantity_unit: "式"
-    pricing_method: "lump_formula"
-    note: "PV容量連動（最低11万円）"
+    unit_price: 0
+    pricing_method: "fixed"
+    is_manual: true
+    note: "案件により選定（単価を入力してください）"
+
+  - "no": 3
+    description: "電線"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 0
+    pricing_method: "fixed"
+    is_manual: true
+    note: "案件により数量・単価が変わるため手動入力"
+
+  - "no": 4
+    description: "配管"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 0
+    pricing_method: "fixed"
+    is_manual: true
+    note: "案件により数量・単価が変わるため手動入力"
+
+  - "no": 5
+    description: "配管"
+    remarks: "　"
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 0
+    pricing_method: "fixed"
+    is_manual: true
+    note: "案件により数量・単価が変わるため手動入力（2本目）"
 
 # =====================================================
 # 3. 施工費

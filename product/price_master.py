@@ -32,8 +32,17 @@ MASTER_PATH = (
     Path(__file__).resolve().parent.parent / "knowledge" / "price_master.json"
 )
 
+# 顧客側の単価修正（上書き）の保存先。{product_id: unit_price} を保持し、
+# Supabase（app_storage）とローカルファイルの両方に永続化する
+# （2026-08-13 顧客要望: 単価マスタはお客さん側で修正できるように）。
+OVERRIDES_PATH = (
+    Path(__file__).resolve().parent.parent / "knowledge" / "price_master_overrides.json"
+)
+OVERRIDES_KEY = "price_master_overrides"  # Supabase app_storage のキー
+
 # 読み込みキャッシュ（mtime+sizeのシグネチャで自動失効）
 _CACHE: dict[str, Any] = {"sig": None, "data": None}
+_OVERRIDES_CACHE: dict[str, Any] = {"loaded": False, "overrides": {}}
 
 
 def _file_signature() -> Optional[tuple]:
@@ -70,8 +79,107 @@ def load_price_master(force: bool = False) -> dict:
             logger.warning(f"price_master.json 読み込み失敗: {e}")
             data = _empty_master()
 
+    data = _apply_price_overrides(data)
     _CACHE["data"] = data
     _CACHE["sig"] = sig
+    return data
+
+
+# ---------------------------------------------------------------------------
+# 顧客側の単価上書き（お客様が単価マスタを修正できるようにする）
+# ---------------------------------------------------------------------------
+def get_price_overrides(force: bool = False) -> dict:
+    """{product_id: unit_price} の上書き辞書を返す（キャッシュ付き）。
+
+    Supabase（app_storage）→ ローカルファイルの順で読む。
+    Streamlit Cloud はコンテナ再起動でローカルファイルが消えるため、
+    本番の永続化は Supabase が正。
+    """
+    if _OVERRIDES_CACHE["loaded"] and not force:
+        return _OVERRIDES_CACHE["overrides"]
+    doc = None
+    try:
+        from learning.storage_backend import is_enabled, kv_get
+        if is_enabled():
+            doc = kv_get(OVERRIDES_KEY)
+    except Exception as e:
+        logger.warning(f"単価上書きのSupabase読込に失敗（ローカルへ）: {e}")
+    if doc is None:
+        try:
+            if OVERRIDES_PATH.exists():
+                with open(OVERRIDES_PATH, "r", encoding="utf-8") as f:
+                    doc = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"単価上書きのローカル読込に失敗: {e}")
+    overrides = {}
+    if isinstance(doc, dict):
+        for pid, price in (doc.get("overrides") or {}).items():
+            try:
+                overrides[str(pid)] = int(price)
+            except (TypeError, ValueError):
+                continue
+    _OVERRIDES_CACHE["overrides"] = overrides
+    _OVERRIDES_CACHE["loaded"] = True
+    return overrides
+
+
+def set_price_override(product_id: str, unit_price: Optional[int]) -> bool:
+    """1製品の単価上書きを保存する（unit_price=None で上書き解除）。
+
+    Supabase とローカルファイルの両方へ保存し、マスターのキャッシュを
+    無効化して次回参照から反映させる。成功で True。
+    """
+    from datetime import datetime
+    overrides = dict(get_price_overrides(force=True))
+    pid = str(product_id)
+    if unit_price is None:
+        overrides.pop(pid, None)
+    else:
+        overrides[pid] = int(unit_price)
+    doc = {
+        "overrides": overrides,
+        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    ok_local = False
+    try:
+        OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = OVERRIDES_PATH.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(doc, f, ensure_ascii=False, indent=2)
+        tmp.replace(OVERRIDES_PATH)
+        ok_local = True
+    except OSError as e:
+        logger.warning(f"単価上書きのローカル保存に失敗: {e}")
+    ok_remote = False
+    try:
+        from learning.storage_backend import is_enabled, kv_set
+        if is_enabled():
+            ok_remote = kv_set(OVERRIDES_KEY, doc)
+    except Exception as e:
+        logger.warning(f"単価上書きのSupabase保存に失敗: {e}")
+    # キャッシュ更新 + マスターキャッシュ無効化（次回 load で上書き再適用）
+    _OVERRIDES_CACHE["overrides"] = overrides
+    _OVERRIDES_CACHE["loaded"] = True
+    _CACHE["sig"] = None
+    return ok_local or ok_remote
+
+
+def _apply_price_overrides(data: dict) -> dict:
+    """マスター dict に顧客の単価上書きを適用する（元単価は base_unit_price に保持）。"""
+    overrides = get_price_overrides()
+    if not overrides:
+        return data
+    products = []
+    for p in data.get("products", []):
+        pid = str(p.get("id", ""))
+        if pid in overrides:
+            p = dict(p)
+            p["base_unit_price"] = p.get("unit_price")
+            p["unit_price"] = overrides[pid]
+            p["price_overridden"] = True
+        products.append(p)
+    data = dict(data)
+    data["products"] = products
     return data
 
 

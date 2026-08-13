@@ -1534,27 +1534,27 @@ def _render_step1_pdf_upload():
 
         st.divider()
 
+        # --- 電圧区分（2026-08-13 顧客要望: アップロード画面で低圧/高圧を明示選択）---
+        category_choice = st.radio(
+            "⚡ 電圧区分",
+            ["自動判別", "高圧（法人）", "低圧（住宅）"],
+            index=0,
+            horizontal=True,
+            help="読み取りと見積の分岐に使います。分かっている場合は明示すると精度が上がります",
+        )
+
         # --- 高精度オプション（v2.2 新機能）---
         with st.expander("⚙️ 詳細オプション（v2.2 高精度モード）", expanded=False):
-            opt_col1, opt_col2 = st.columns(2)
-            with opt_col1:
-                category_choice = st.radio(
-                    "書類カテゴリ",
-                    ["自動判別", "法人・高圧", "住宅・低圧"],
-                    index=0,
-                    help="自動判別で十分ですが、明らかに住宅 or 法人と分かっている場合は明示すると精度が上がります",
-                )
-            with opt_col2:
-                use_enhancement = st.checkbox(
-                    "手書きOCR画像前処理を有効化",
-                    value=True,
-                    help="傾き補正・コントラスト強化で手書き読取精度を向上",
-                )
-                use_self_consistency = st.checkbox(
-                    "自己一貫性パス（高精度・3倍時間）",
-                    value=False,
-                    help="複数回サンプリングして多数決。精度が劇的に上がるが処理時間が3倍になる",
-                )
+            use_enhancement = st.checkbox(
+                "手書きOCR画像前処理を有効化",
+                value=True,
+                help="傾き補正・コントラスト強化で手書き読取精度を向上",
+            )
+            use_self_consistency = st.checkbox(
+                "自己一貫性パス（高精度・3倍時間）",
+                value=False,
+                help="複数回サンプリングして多数決。精度が劇的に上がるが処理時間が3倍になる",
+            )
 
         col_back, col_read = st.columns([1, 2])
         with col_back:
@@ -1567,7 +1567,7 @@ def _render_step1_pdf_upload():
             label = f"🔍 AI読み取り開始（{file_count}件 / {total_pages}ページを解析）"
             if st.button(label, type="primary", use_container_width=True):
                 progress_bar = st.progress(0, text="準備中...")
-                category_map = {"自動判別": None, "法人・高圧": "commercial", "住宅・低圧": "residential"}
+                category_map = {"自動判別": None, "高圧（法人）": "commercial", "低圧（住宅）": "residential"}
                 category_arg = category_map.get(category_choice)
                 try:
                     progress_bar.progress(10, text="📄 PDFを画像に変換中...")
@@ -2258,6 +2258,47 @@ def _render_price_master_section(estimate: EstimateData):
         if len(results) > MAX_ROWS:
             st.caption(f"※ 先頭{MAX_ROWS}件のみ表示（全{len(results)}件）。キーワードで絞り込んでください。")
 
+        # --- 単価の修正（お客様側で編集可・2026-08-13 顧客要望）---
+        if results:
+            st.divider()
+            st.markdown("**✏️ 単価の修正**（保存すると全員の見積に反映されます）")
+            _ov = pm.get_price_overrides()
+            if _ov:
+                st.caption(f"現在 {len(_ov)} 件の単価がお客様側で修正されています")
+            edit_opts = results[:MAX_ROWS]
+            edit_labels = [pm.product_label(r) for r in edit_opts]
+            edit_idx = st.selectbox(
+                "単価を修正する部材を選択",
+                range(len(edit_opts)),
+                format_func=lambda i: edit_labels[i],
+                key="pm_edit_sel",
+            )
+            edit_sel = edit_opts[edit_idx]
+            cur_price = int(edit_sel.get("unit_price") or 0)
+            ec1, ec2, ec3 = st.columns([2, 1, 1])
+            with ec1:
+                new_master_price = st.number_input(
+                    "新しい単価（円・税抜）", value=cur_price, min_value=0,
+                    step=100, key=f"pm_edit_price_{edit_sel.get('id', '')}")
+            with ec2:
+                st.markdown("<div style='height:1.8rem'></div>", unsafe_allow_html=True)
+                if st.button("💾 保存", key="pm_edit_save", use_container_width=True):
+                    if pm.set_price_override(edit_sel.get("id", ""), int(new_master_price)):
+                        st.success("単価を保存しました")
+                        st.rerun()
+                    else:
+                        st.error("保存に失敗しました（通信環境を確認してください）")
+            with ec3:
+                st.markdown("<div style='height:1.8rem'></div>", unsafe_allow_html=True)
+                if edit_sel.get("price_overridden") and st.button(
+                        "↩️ 元に戻す", key="pm_edit_clear", use_container_width=True):
+                    pm.set_price_override(edit_sel.get("id", ""), None)
+                    st.rerun()
+            if edit_sel.get("price_overridden"):
+                st.caption(
+                    f"※ この部材は修正済みです（価格表の元単価: "
+                    f"¥{int(edit_sel.get('base_unit_price') or 0):,}）")
+
         # --- 見積へ明細追加 ---
         cat_options = [
             c.category for c in estimate.summary.categories
@@ -2478,6 +2519,53 @@ def _render_roof_layout_section(estimate: EstimateData):
                 st.caption(f"PNG生成スキップ: {e}")
 
 
+def _render_supply_selection_section(estimate: EstimateData):
+    """支給品の商品ごと選択（2026-08-13 顧客要望 / 8-10会議アクション）。
+
+    チェックを外した商品は材料費へ移動し、単価マスターの価格×数量で計上する。
+    スナップショット（見積生成直後の支給品・材料費リスト）から毎回組み立て
+    直すため、チェックの付け外しを何度行っても壊れない。
+    """
+    from pricing.supply_selection import (
+        apply_supply_selection, item_key, snapshot_sections)
+
+    # スナップショットは見積オブジェクトごとに1回だけ作る
+    if st.session_state.get("supply_snapshot_ref") != id(estimate):
+        st.session_state.supply_snapshot = snapshot_sections(estimate)
+        st.session_state.supply_snapshot_ref = id(estimate)
+        st.session_state.supply_flags = {}
+        st.session_state.supply_applied = None
+    snap = st.session_state.supply_snapshot
+    if not snap.get("supplied"):
+        return
+
+    flags = st.session_state.supply_flags
+    n_off = sum(1 for it in snap["supplied"]
+                if not flags.get(item_key(it), True))
+    title = "📦 支給品の選択（商品ごと）"
+    if n_off:
+        title += f" — {n_off}件を材料費で計上中"
+    with st.expander(title, expanded=False):
+        st.caption(
+            "チェックを外した商品は材料費に移動し、単価マスターの価格 × 数量で"
+            "計上します（単価マスターは上の「産業用部材 単価マスター」から"
+            "修正できます。未登録の製品は手動入力になります）。")
+        cols = st.columns(2)
+        for i, it in enumerate(snap["supplied"]):
+            k = item_key(it)
+            label = it.description + (f"（{it.remarks}）" if it.remarks else "")
+            with cols[i % 2]:
+                flags[k] = st.checkbox(
+                    label, value=flags.get(k, True), key=f"supply_{k}")
+
+    # チェック状態が変わった時だけ再構築（冪等）→ 合計表示に即反映
+    state = tuple(sorted(flags.items()))
+    if st.session_state.supply_applied != state:
+        apply_supply_selection(estimate, snap, flags)
+        st.session_state.supply_applied = state
+        st.rerun()
+
+
 # =============================================================
 # Step 3: 見積プレビュー
 # =============================================================
@@ -2506,6 +2594,7 @@ def _render_step3_estimate():
     _render_voice_edit_section(estimate)
     _render_product_info_section(estimate)
     _render_price_master_section(estimate)
+    _render_supply_selection_section(estimate)  # 2026-08-13 商品ごと支給品選択
     _render_roof_layout_section(estimate)
 
     # 値引き調整

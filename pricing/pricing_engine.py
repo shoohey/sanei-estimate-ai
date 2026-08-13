@@ -196,14 +196,15 @@ def _build_material_section(rules: dict, survey: SurveyData) -> CategorySection:
 
         pricing_method = item_def.get("pricing_method", "fixed")
         unit_price = item_def.get("unit_price", 0)
+        is_manual = item_def.get("is_manual", False)
 
-        if pricing_method == "kw_rate":
+        if pricing_method == "kw_rate" and not is_manual:
             # 材料費でも kW_rate をサポート（PV容量連動の雑材など）
             kw = survey.equipment.pv_capacity_kw
             amount = int(kw * unit_price)
             quantity_str = str(kw)
             quantity_val = kw
-        elif pricing_method == "lump_formula":
+        elif pricing_method == "lump_formula" and not is_manual:
             # lump_formula: 計算式の結果を金額そのものとして扱う（unit_price不使用）
             quantity_str, quantity_val = _resolve_quantity(item_def, survey)
             amount = int(quantity_val)
@@ -212,9 +213,16 @@ def _build_material_section(rules: dict, survey: SurveyData) -> CategorySection:
             unit_price = amount
         else:
             quantity_str, quantity_val = _resolve_quantity(item_def, survey)
-            amount = int(quantity_val * unit_price)
+            amount = int(quantity_val * unit_price) if not is_manual else 0
 
         reasoning = generate_reasoning(item_def, quantity_val, unit_price, amount, survey)
+        if is_manual:
+            reasoning = LineItemReasoning(
+                method=PricingMethod.MANUAL,
+                formula="手動入力が必要です",
+                source=item_def.get("note", ""),
+                note="金額を手動で入力してください",
+            )
 
         item = LineItem(
             no=item_def["no"],
@@ -225,6 +233,7 @@ def _build_material_section(rules: dict, survey: SurveyData) -> CategorySection:
             quantity_unit=item_def.get("quantity_unit", ""),
             unit_price=unit_price,
             amount=amount,
+            is_manual_input=is_manual,
             reasoning=reasoning,
         )
         section.items.append(item)

@@ -171,10 +171,10 @@ def test_diff_price_changed():
 def test_diff_item_added_and_removed():
     """正規のみ→item_added（item_add）、AIのみ→item_removed（item_suppress）。"""
     ai = _estimate("ai", [
-        _item("材料費", 1, "接地材料", price=660, qty=200, unit="m"),
+        _item("施工費", 1, "接地工事", price=660, qty=200, unit="m"),
     ])
     official = _estimate("official", [
-        _item("材料費", 1, "防水処理材", price=12000, qty=1, remarks="シーリング材"),
+        _item("施工費", 1, "防水処理工事", price=12000, qty=1, remarks="シーリング材"),
     ], project="掛川店")
 
     diffs = diff_estimates(ai, official)
@@ -184,10 +184,10 @@ def test_diff_item_added_and_removed():
     assert len(added) == 1, "item_added が検出されない"
     a = added[0]
     assert a.learnable and a.proposed_rule["kind"] == "item_add"
-    assert a.proposed_rule["category"] == "材料費"
-    assert a.proposed_rule["match_description"] == normalize_desc("防水処理材")
+    assert a.proposed_rule["category"] == "施工費"
+    assert a.proposed_rule["match_description"] == normalize_desc("防水処理工事")
     payload = a.proposed_rule["payload"]
-    assert payload["description"] == "防水処理材"
+    assert payload["description"] == "防水処理工事"
     assert payload["remarks"] == "シーリング材"
     assert payload["quantity_value"] == 1 and payload["quantity_unit"] == "式"
     assert payload["unit_price"] == 12000
@@ -196,7 +196,7 @@ def test_diff_item_added_and_removed():
     assert len(removed) == 1, "item_removed が検出されない"
     r = removed[0]
     assert r.learnable and r.proposed_rule["kind"] == "item_suppress"
-    assert r.proposed_rule["match_description"] == normalize_desc("接地材料")
+    assert r.proposed_rule["match_description"] == normalize_desc("接地工事")
     assert r.proposed_rule["match_remarks"] == ""
     assert r.proposed_rule["payload"] == {"old_unit_price": 660}, \
         "suppress にも old_unit_price（複合照合用）が入るはず"
@@ -249,8 +249,8 @@ def test_diff_same_key_collision():
     """
     ai = _estimate("ai", [])
     official = _estimate("official", [
-        _item("材料費", 1, "防水材　シート", price=100),
-        _item("材料費", 2, "防水材・シート", price=200),  # 正規化すると同じ摘要・同じ備考("")
+        _item("施工費", 1, "防水材　シート", price=100),
+        _item("施工費", 2, "防水材・シート", price=200),  # 正規化すると同じ摘要・同じ備考("")
     ])
     diffs = diff_estimates(ai, official)
     added = [d for d in diffs if d.diff_type == "item_added"]
@@ -270,8 +270,8 @@ def test_diff_dup_removed_not_learnable():
     波及する事故（レビュー指摘 high）を防ぐ。
     """
     ai = _estimate("ai", [
-        _item("材料費", 1, "接地材料　雑材", price=7200),
-        _item("材料費", 2, "接地材料・雑材", price=7200),  # 正規化すると同じ摘要
+        _item("施工費", 1, "接地材料　雑材", price=7200),
+        _item("施工費", 2, "接地材料・雑材", price=7200),  # 正規化すると同じ摘要
     ])
     official = _estimate("official", [])
     diffs = diff_estimates(ai, official)
@@ -290,19 +290,23 @@ _PV_REMARKS_PRICES = [
 ]
 
 
-def _pv_items(overrides=None, skip=()):
-    """備考だけが違う同名5項目（材料費「PVケーブル間」）の明細を作る。"""
+def _pv_items(overrides=None, skip=(), category="材料費"):
+    """備考だけが違う同名5項目（「PVケーブル間」）の明細を作る。
+
+    項目構成（add/suppress）の学習テストは 施工費 を指定すること
+    （支給品・材料費は 2026-08-13 から項目構成の学習対象外）。
+    """
     overrides = overrides or {}
     return [
-        _item("材料費", i + 1, "PVケーブル間",
+        _item(category, i + 1, "PVケーブル間",
               price=overrides.get(r, p), remarks=r)
         for i, (r, p) in enumerate(_PV_REMARKS_PRICES) if r not in skip
     ]
 
 
-def _pv_pricing_rules():
+def _pv_pricing_rules(list_name="material_items"):
     """備考だけが違う同名5項目を持つ pricing rules dict を作る。"""
-    return {"material_items": [
+    return {list_name: [
         {"no": i + 1, "description": "PVケーブル間", "remarks": r,
          "quantity": "1", "quantity_unit": "式", "unit_price": p,
          "pricing_method": "fixed", "note": ""}
@@ -343,8 +347,8 @@ def test_diff_dup_remarks_price_changed():
 def test_diff_dup_row_deleted_no_false_learn():
     """同名複数項目で正規側の1行が削除されても、偽の price_changed や
     learnable な suppress が提案されないこと（レビュー指摘 high: ペアずれ）。"""
-    ai = _estimate("ai", _pv_items())
-    official = _estimate("official", _pv_items(skip=("配管",)))
+    ai = _estimate("ai", _pv_items(category="施工費"))
+    official = _estimate("official", _pv_items(skip=("配管",), category="施工費"))
     diffs = diff_estimates(ai, official)
     false_prices = [d for d in diffs if d.diff_type == "price_changed"]
     assert not false_prices, \
@@ -361,24 +365,24 @@ def test_apply_suppress_dup_guard():
     # match_remarks あり → 備考一致の1項目だけ除去
     _reset_store()
     store.add_rules("estimate", [
-        {"kind": "item_suppress", "category": "材料費",
+        {"kind": "item_suppress", "category": "施工費",
          "match_description": normalize_desc("PVケーブル間"),
          "match_remarks": normalize_desc("配管"),
          "payload": {"old_unit_price": 38000}},
     ])
-    applied = apply_learned_rules(_pv_pricing_rules())
-    remarks = [it["remarks"] for it in applied["material_items"]]
+    applied = apply_learned_rules(_pv_pricing_rules("construction_items"))
+    remarks = [it["remarks"] for it in applied["construction_items"]]
     assert "配管" not in remarks, "備考一致項目が除去されるはず"
     assert len(remarks) == 4, f"同名他項目まで消えている: {remarks}"
 
     # 旧形式（match_remarks も old_unit_price も無し）で同名5件一致 → 適用スキップ
     _reset_store()
     store.add_rules("estimate", [
-        {"kind": "item_suppress", "category": "材料費",
+        {"kind": "item_suppress", "category": "施工費",
          "match_description": normalize_desc("PVケーブル間"), "payload": {}},
     ])
-    applied2 = apply_learned_rules(_pv_pricing_rules())
-    assert len(applied2["material_items"]) == 5, \
+    applied2 = apply_learned_rules(_pv_pricing_rules("construction_items"))
+    assert len(applied2["construction_items"]) == 5, \
         "対象を特定できない suppress は何も消さないはず"
 
 
@@ -521,17 +525,57 @@ def test_apply_lump_formula_excluded():
 
 
 def test_apply_suppress():
-    """item_suppress で一致項目がリストから除去されること。"""
+    """item_suppress: 施工費は除去され、支給品・材料費はスキップされること
+    （2026-08-13 顧客要望: 支給品・材料費の項目構成は学習で変更しない）。"""
     _reset_store()
     store.add_rules("estimate", [
+        {"kind": "item_suppress", "category": "施工費",
+         "match_description": normalize_desc("墨出し"), "payload": {}},
         {"kind": "item_suppress", "category": "材料費",
          "match_description": normalize_desc("PVケーブル間"), "payload": {}},
+        {"kind": "item_suppress", "category": "支給品",
+         "match_description": normalize_desc("太陽光モジュール"), "payload": {}},
+    ])
+    applied = apply_learned_rules(_sample_pricing_rules())
+    assert len(applied["construction_items"]) == 0, "施工費の抑止項目が除去されていない"
+    descs = [it["description"] for it in applied["material_items"]]
+    assert "PVケーブル間" in descs, "材料費は項目構成の学習対象外（消えてはいけない）"
+    assert len(applied["supplied_items"]) == 1, "支給品は項目構成の学習対象外（消えてはいけない）"
+
+
+def test_apply_add_skipped_for_fixed_structure():
+    """item_add: 支給品・材料費への項目追加ルールは適用されないこと
+    （例外案件の材料構成がデフォルト化する事故の防止）。"""
+    _reset_store()
+    store.add_rules("estimate", [
+        {"kind": "item_add", "category": "材料費",
+         "match_description": normalize_desc("TUG架台"),
+         "display_description": "TUG架台",
+         "payload": {"category": "材料費", "description": "TUG架台",
+                     "quantity_value": 1.0, "quantity_unit": "式",
+                     "unit_price": 2843000}},
     ])
     applied = apply_learned_rules(_sample_pricing_rules())
     descs = [it["description"] for it in applied["material_items"]]
-    assert "PVケーブル間" not in descs, "抑止項目が除去されていない"
-    assert "その他雑材費" in descs, "無関係な項目まで消えている"
-    assert len(applied["construction_items"]) == 1, "他リストは不変のはず"
+    assert "TUG架台" not in descs, "材料費への item_add は適用されないはず"
+
+
+def test_diff_fixed_structure_reference_only():
+    """支給品・材料費の項目追加/削除差分は参考表示になること（単価のみ学習）。"""
+    ai = _estimate("ai", [
+        _item("支給品", 1, "遠隔監視装置", price=0, remarks="スマートロガー"),
+    ])
+    official = _estimate("official", [
+        _item("材料費", 1, "TUG架台", price=2843000),
+    ])
+    diffs = diff_estimates(ai, official)
+    grouped = _by_type(diffs)
+    added = grouped.get("item_added", [])
+    removed = grouped.get("item_removed", [])
+    assert added and not added[0].learnable and added[0].proposed_rule is None
+    assert "項目構成は学習で変更しません" in added[0].summary
+    assert removed and not removed[0].learnable and removed[0].proposed_rule is None
+    assert "項目構成は学習で変更しません" in removed[0].summary
 
 
 def test_apply_add():
@@ -876,6 +920,8 @@ def main() -> bool:
         test_apply_override_and_deepcopy,
         test_apply_lump_formula_excluded,
         test_apply_suppress,
+        test_apply_add_skipped_for_fixed_structure,
+        test_diff_fixed_structure_reference_only,
         test_apply_add,
         test_apply_empty_category_all_lists,
         test_apply_no_rules_passthrough,
