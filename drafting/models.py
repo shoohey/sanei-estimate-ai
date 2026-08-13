@@ -141,7 +141,13 @@ class RoofFace:
     origin_x_mm: float = 0.0
     origin_y_mm: float = 0.0
     # --- 配置パラメータ ---
-    margin_mm: float = 500.0                  # 屋根エッジからの離隔
+    # 屋根エッジからの離隔。0 = 未指定（作図ルール3条により「各方向寸法の
+    # 10%・上限2m」が layout_engine 側で自動適用される）。値を入れた場合は
+    # 500 を含むあらゆる値がそのまま尊重される（2026-08-13 顧客提供
+    # 「太陽光配置図 作図ルール」準拠。旧既定値は500だった）
+    margin_mm: float = 0.0                    # 両方向共通の明示値（0=未指定）
+    margin_ns_mm: float = 0.0                 # 南北方向（上下端）の離隔（0=未指定）
+    margin_ew_mm: float = 0.0                 # 東西方向（左右端）の離隔（0=未指定）
     orientation: str = Orientation.AUTO       # この面でのパネル向き
     target_panel_count: Optional[int] = None  # この面に置きたい枚数（抽出値・上限）
     # ハッチ向き。空（既定）なら描画時に roof_type から自動判定

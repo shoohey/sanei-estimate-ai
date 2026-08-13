@@ -202,6 +202,71 @@ def test_prompt_new_rules():
     assert "0 起点で出力" in p, "ポリゴン0起点の指示が無い"
 
 
+def test_margin_10_percent_rule():
+    """離隔既定 = 各方向寸法の10%（上限2m）。作図ルール3条（2026-08-13）。"""
+    from drafting.layout_engine import _resolve_margins
+    f = RoofFace()  # margin未指定（既定500=センチネル）
+    ns, ew = _resolve_margins(f, 5980, 4470)  # 鎌倉ゴールデンケースの屋根
+    assert ns == 447.0, f"南北=奥行の10%のはず: {ns}"
+    assert ew == 598.0, f"東西=幅の10%のはず: {ew}"
+    ns, ew = _resolve_margins(f, 30000, 25000)  # 大屋根 → 2m上限
+    assert ns == 2000.0 and ew == 2000.0, f"10%が2m超なら2m: {ns}/{ew}"
+
+
+def test_margin_explicit_wins():
+    """現調で明示された離隔は10%ルールより優先されること（作図ルール: 現調記載>標準）。"""
+    from drafting.layout_engine import _resolve_margins
+    f = RoofFace(); f.margin_ns_mm = 450.0; f.margin_ew_mm = 1000.0
+    assert _resolve_margins(f, 30000, 25000) == (450.0, 1000.0)
+    f2 = RoofFace(); f2.margin_mm = 300.0  # 共通明示
+    assert _resolve_margins(f2, 30000, 25000) == (300.0, 300.0)
+    # 500 の明示も尊重される（Codex指摘: 旧センチネル方式の曖昧さ解消の回帰）
+    f3 = RoofFace(); f3.margin_mm = 500.0
+    assert _resolve_margins(f3, 30000, 25000) == (500.0, 500.0)
+
+
+def test_target_priority_relaxes_auto_margin():
+    """目標枚数が10%離隔で収まらない場合、離隔を500mmまで緩めて配置すること
+    （作図ルール優先順位: ②現調指定 > ③標準離隔）。明示離隔は緩めない。"""
+    spec = DraftingSpec()
+    spec.panel = _xsol_panel()
+    # 14200×9247 に40枚: 10%離隔(1420/924.7)では収まらないが500なら収まる
+    spec.roof_faces = [_face(14200, 9247, target=40, roof_type="rikuyane")]
+    place_panels(spec)
+    assert spec.roof_faces[0].panel_count == 40, \
+        f"目標優先で離隔緩和されるはず: {spec.roof_faces[0].panel_count}"
+    # 離隔が明示されている場合は緩めない（収まらない→未達警告）
+    spec2 = DraftingSpec()
+    spec2.panel = _xsol_panel()
+    f = _face(14200, 9247, target=40, roof_type="rikuyane")
+    f.margin_ns_mm = 1500.0
+    f.margin_ew_mm = 1500.0
+    spec2.roof_faces = [f]
+    place_panels(spec2)
+    assert spec2.roof_faces[0].panel_count < 40, "明示離隔は緩和されないはず"
+    assert any("しか配置できません" in w for w in spec2.warnings)
+
+
+def test_kamakura_golden_case():
+    """鎌倉警察署 滑川交番（低圧・465W×4枚）: 5980×4470 の陸屋根に
+    2×2 横置きで4枚が10%離隔内に収まること（正解図面 2026-07-04 準拠）。"""
+    spec = DraftingSpec()
+    spec.panel = PanelSpec(maker="NextEnergy", model="NER108M465B-NE",
+                           output_w=465, long_mm=1762, short_mm=1134,
+                           gap_long_mm=235, gap_short_mm=10)
+    spec.roof_faces = [_face(5980, 4470, target=4, name="陸屋根",
+                             roof_type="rikuyane", orientation="landscape")]
+    place_panels(spec)
+    f = spec.roof_faces[0]
+    assert f.panel_count == 4, f"4枚配置のはず: {f.panel_count}"
+    assert f.cols == 2 and f.rows == 2, f"2列×2行のはず: {f.cols}×{f.rows}"
+    assert abs(spec.total_kw - 1.86) < 0.001, spec.total_kw
+    # 全パネルが屋根内・離隔(10%=EW598/NS447)以上を確保
+    for pr in f.panels:
+        assert pr.x_mm >= 598 - 1 and pr.x_mm + pr.w_mm <= 5980 - 598 + 1
+        assert pr.y_mm >= 447 - 1 and pr.y_mm + pr.h_mm <= 4470 - 447 + 1
+
+
 def test_engine_reproduces_correct_counts():
     """正解①相当の入力（面ごと寸法＋目標枚数）で68枚を正確に再現できること
     （エンジン到達度の回帰保証。2026-08-11 分析の実測に基づく）。"""
@@ -233,6 +298,10 @@ def main():
         test_normalize_totals_mismatch_warning,
         test_normalize_kw_mismatch_warning,
         test_prompt_new_rules,
+        test_margin_10_percent_rule,
+        test_margin_explicit_wins,
+        test_target_priority_relaxes_auto_margin,
+        test_kamakura_golden_case,
         test_engine_reproduces_correct_counts,
     ]
     print("=== 製図品質ガードテスト（API不要） ===")

@@ -34,6 +34,7 @@ from __future__ import annotations
 import io
 import math
 import os
+import re
 from typing import Optional
 
 # --- パネル寸法のカタログ読み込み ---------------------------------------------
@@ -118,14 +119,19 @@ def panel_dimensions_from_module(
     3. マッチがなければ出力Wから典型値を推定する。
     4. 全て失敗すれば既定値 (2.0, 1.0) を返す。
     """
-    maker_s = (maker or "").strip().lower()
+    # 空白・中黒を除いた小文字で比較する（"NEXT ENERGY" と "NextEnergy" の
+    # 表記揺れでカタログ照合が外れ、典型値寸法に落ちる実障害への対処。2026-08-13）
+    def _canon(s: str) -> str:
+        return re.sub(r"[\s・]", "", (s or "").strip().lower())
+
+    maker_s = _canon(maker)
     model_s = (model or "").strip().lower()
     catalog = _load_panel_catalog()
 
     # 1) メーカー一致 + 型式プレフィックス一致
     if maker_s and model_s:
         for entry in catalog:
-            em = str(entry.get("maker", "")).strip().lower()
+            em = _canon(str(entry.get("maker", "")))
             ep = str(entry.get("model_prefix", "")).strip().lower()
             if not em or not ep:
                 continue
@@ -142,7 +148,7 @@ def panel_dimensions_from_module(
             best = None
             best_diff = None
             for entry in catalog:
-                em = str(entry.get("maker", "")).strip().lower()
+                em = _canon(str(entry.get("maker", "")))
                 if em != maker_s:
                     continue
                 ew = float(entry.get("output_w", 0) or 0)

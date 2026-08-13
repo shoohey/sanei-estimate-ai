@@ -313,8 +313,11 @@ def build_user_prompt(drawing_type: str = DrawingType.LAYOUT, hint: str = "") ->
      よう（例: 面2は面1の右に「面1の幅＋2000mm」）ずらして並べ、warnings に
      「面の相対位置は仮配置」と記載する
    - パネルの向き（縦置き portrait / 横置き landscape）
-   - 屋根端・軒・ケラバからの離隔の記載（例「離隔500」「端部より500逃げ」）があれば
-     margin_mm へ。アレイ間・段間の間隔（長辺側隙間）の記載があれば
+   - 屋根端からの離隔の記載があれば方向別に margin_ns_mm（南北・上下端）/
+     margin_ew_mm（東西・左右端）へ、方向不明なら margin_mm へ
+     （例「離隔500」「端部より500逃げ」「縦10% 450mm」）。記載が無ければ
+     キーを省略する（標準ルール＝各方向寸法の10%・上限2mが自動適用される）。
+     アレイ間・段間の間隔（長辺側隙間）の記載があれば
      panel.gap_long_mm（行間・段と段の間）へ
 4. 総枚数・設置容量: 「68枚」「設置容量:34.68kW(68枚)」等の記載があれば
    total_panels / total_kw に転記する。各面 target_panel_count の合計が総枚数と
@@ -324,6 +327,24 @@ def build_user_prompt(drawing_type: str = DrawingType.LAYOUT, hint: str = "") ->
 6. PCS（パワコン）の型番・台数（pcs_model, pcs_count）
 7. ストリング系統（◯直×◯並。例「12直×5並」）→ strings（PCSごと）
 8. 図番・作成日・縮尺など（title）
+
+【サンエー作図ルール（抜粋。2026-08 顧客提供の作図ルール書より）】
+- 方位: 建物図面の上方向を自動的に北と判断しない。方位記号や「海」「道路」等の
+  手がかりから判断し、判断できない場合は推測せず warnings に「方位未確認」と記載する。
+- 離隔: 現調資料に記載された離隔寸法が標準ルールより常に優先。記載が無ければ
+  margin系のキーは省略する（各方向寸法の10%・上限2mの標準ルールが自動適用される）。
+- 障害物・設置禁止範囲: 屋上設備・ハト小屋・トップライト・換気設備・室外機・
+  アンテナ・配管・ダクト・点検口・排水口・ドレン・避雷設備等が図にある場合は、
+  多角形の切欠きとして屋根形状に反映するか、warnings に「障害物あり
+  （位置・寸法要確認）」と記載する。
+- 影: 南側・南東側・南西側に高い立上り・塔屋・隣接建物・樹木等があれば
+  warnings に「影検討必要」と記載する（勝手に「影響なし」と判断しない）。
+- 現調シートには（低圧）様式がある: 表題「現地調査チェックシート（低圧）」、
+  【計画設備情報（共通）】表（モジュールメーカー / モジュール型式 /
+  モジュール定格出力(W/枚) / 設置予定枚数(枚) / 想定PV容量(kW) / 設計確定度）と、
+  別紙の手書き欄（屋根寸法・障害物・「海」等の方位手がかり・建物高さ h=◯m）。
+  設置予定枚数は target_panel_count と total_panels に、想定PV容量は total_kw に
+  転記する。
 
 【寸法・向きの単位ルール】
 - すべて mm。m/cm 表記は mm に換算。
@@ -522,7 +543,8 @@ def _normalize_parsed(parsed: dict, drawing_type: str) -> tuple[dict, list[str],
                 face["orientation"] = Orientation.AUTO
                 confidence[f"roof_faces.{idx}.orientation"] = "low"
             # 数値寛容変換
-            for k in ("width_mm", "depth_mm", "origin_x_mm", "origin_y_mm", "margin_mm"):
+            for k in ("width_mm", "depth_mm", "origin_x_mm", "origin_y_mm",
+                      "margin_mm", "margin_ns_mm", "margin_ew_mm"):
                 if k in face:
                     face[k] = _coerce_number(face[k])
             if "target_panel_count" in face and face["target_panel_count"] is not None:

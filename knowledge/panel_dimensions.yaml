@@ -34,6 +34,14 @@ panels:
     long_m: 1.722
     short_m: 1.134
     weight_kg: 21.5
+  # NER108M465B-NE（鎌倉ゴールデンケース 2026-08-13。寸法は正解図面の
+  # モジュール詳細 1762×1134 より。原価表の記載はH1732だが図面優先）
+  - maker: NextEnergy
+    model_prefix: NER108M465B
+    output_w: 465
+    long_m: 1.762
+    short_m: 1.134
+    weight_kg: 21.0
   - maker: NextEnergy
     model_prefix: NER108
     output_w: 460

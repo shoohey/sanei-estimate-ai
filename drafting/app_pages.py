@@ -340,8 +340,12 @@ def render_step2_confirm():
                     min_value=0, step=1, key=f"df_fcount_{i}",
                     help="0 のままにすると、屋根面に収まる最大枚数を自動で配置します。")
                 face["target_panel_count"] = int(_cnt) or None
-                face["margin_mm"] = st.number_input("離隔マージン (mm)", value=float(face.get("margin_mm", 500) or 0),
-                                                   min_value=0.0, step=50.0, key=f"df_fmargin_{i}")
+                face["margin_mm"] = st.number_input(
+                    "離隔マージン (mm)　※0=自動（各方向寸法の10%・上限2m）",
+                    value=float(face.get("margin_mm", 0) or 0),
+                    min_value=0.0, step=50.0, key=f"df_fmargin_{i}",
+                    help="0のままなら作図ルールの標準（各方向の屋根寸法の10%・"
+                         "上限2m）が自動適用されます。値を入れるとその離隔を優先します")
 
             g1, g2 = st.columns(2)
             with g1:

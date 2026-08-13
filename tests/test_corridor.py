@@ -33,7 +33,9 @@ def _make_spec(walkway=0.0, group=2, orient=Orientation.PORTRAIT, target=None):
                         gap_long_mm=25.0, gap_short_mm=10.0,
                         walkway_mm=walkway, walkway_every_n_cols=group),
         roof_faces=[RoofFace(name="面1", roof_type=RoofType.KAWARA,
-                             width_mm=12000, depth_mm=8000, margin_mm=500,
+                             width_mm=12000, depth_mm=8000,
+                             # 10%自動離隔ルール(2026-08-13)から独立させるため明示指定
+                             margin_ns_mm=500.0, margin_ew_mm=500.0,
                              orientation=orient, target_panel_count=target)],
     )
 

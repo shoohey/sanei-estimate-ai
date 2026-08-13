@@ -44,6 +44,31 @@ from drafting.models import (
 # 点検通路を挿入する既定の列間隔（2026-07-23 会議 修正①: 2列ごと）
 WALKWAY_EVERY_N_COLS = 2
 
+# 屋根端部からの離隔の既定ルール（2026-08-13 顧客提供「太陽光配置図 作図ルール」3条）:
+# 各方向とも「その方向の屋根寸法の10%以上」を確保し、10%が2mを超える場合は2m。
+# 現調資料に明示された離隔（margin_ns_mm / margin_ew_mm / margin_mm）が常に優先。
+MARGIN_RATE = 0.10
+MARGIN_CAP_MM = 2000.0
+
+
+def _resolve_margins(face: RoofFace, width_mm: float,
+                     depth_mm: float) -> Tuple[float, float]:
+    """屋根面の離隔 (南北=奥行方向, 東西=幅方向) を決める。
+
+    優先順位: 方向別の明示値 > 共通の明示値(margin_mm) > 10%ルール(上限2m)。
+    0 以下は「未指定」。明示された値は 500 を含めそのまま尊重される
+    （Codexレビュー指摘対応: RoofFace.margin_mm の既定値を 0=未指定 に変更し、
+    明示500mmとの曖昧さを解消した）。
+    """
+    ns = float(getattr(face, "margin_ns_mm", 0) or 0)
+    ew = float(getattr(face, "margin_ew_mm", 0) or 0)
+    base = float(face.margin_mm or 0)
+    if ns <= 0:
+        ns = base if base > 0 else min(MARGIN_RATE * depth_mm, MARGIN_CAP_MM)
+    if ew <= 0:
+        ew = base if base > 0 else min(MARGIN_RATE * width_mm, MARGIN_CAP_MM)
+    return ns, ew
+
 
 def _fit_count(avail: float, panel: float, gap: float) -> int:
     """利用可能長 avail に panel（隙間 gap）が何個並ぶかを返す。
@@ -106,7 +131,8 @@ def _grid_positions(
     panel_h: float,
     gap_col: float,
     gap_row: float,
-    margin: float,
+    margin_x: float,
+    margin_y: float,
     walkway_col: float = 0.0,
     walkway_group: int = WALKWAY_EVERY_N_COLS,
 ) -> Tuple[int, int, List[Tuple[float, float]]]:
@@ -121,7 +147,8 @@ def _grid_positions(
         panel_h: パネルの奥行方向寸法 mm。
         gap_col: 列間（幅方向）＝短辺側隙間 mm。
         gap_row: 行間（奥行方向）＝長辺側隙間 mm。
-        margin: 屋根エッジからの離隔 mm（左上オフセットの基準）。
+        margin_x: 東西方向（左右端）の離隔 mm（左オフセットの基準）。
+        margin_y: 南北方向（上下端）の離隔 mm（上オフセットの基準）。
         walkway_col: 点検通路の幅 mm（0以下=通路なし・従来配置）。
         walkway_group: 何列ごとに点検通路を入れるか（既定2列ごと）。
 
@@ -140,8 +167,8 @@ def _grid_positions(
         used_w = cols * panel_w + (cols - 1) * gap_col
     used_d = rows * panel_h + (rows - 1) * gap_row
     # 水平・垂直とも中央寄せ（マージン内で余った分を均等に振る）
-    offset_x = margin + max(0.0, (avail_w - used_w) / 2.0)
-    offset_y = margin + max(0.0, (avail_d - used_d) / 2.0)
+    offset_x = margin_x + max(0.0, (avail_w - used_w) / 2.0)
+    offset_y = margin_y + max(0.0, (avail_d - used_d) / 2.0)
 
     # 列ごとの x 座標（通路ありは累積加算。通路なしは従来式のまま＝完全互換）
     if use_walkway:
@@ -245,14 +272,15 @@ def _place_rectangle_one(
     """矩形屋根面を指定向きで配置し (rows, cols, PanelRect群) を返す。"""
     width = float(face.width_mm or 0)
     depth = float(face.depth_mm or 0)
-    margin = float(face.margin_mm or 0)
-    avail_w = width - 2 * margin
-    avail_d = depth - 2 * margin
+    margin_ns, margin_ew = _resolve_margins(face, width, depth)
+    avail_w = width - 2 * margin_ew
+    avail_d = depth - 2 * margin_ns
 
     panel_w, panel_h, gap_col, gap_row = _orientation_dims(orientation, panel)
     walkway, walkway_group = _walkway_params(panel)
     rows, cols, positions = _grid_positions(
-        avail_w, avail_d, panel_w, panel_h, gap_col, gap_row, margin,
+        avail_w, avail_d, panel_w, panel_h, gap_col, gap_row,
+        margin_ew, margin_ns,
         walkway_col=walkway, walkway_group=walkway_group,
     )
     rects = [
@@ -281,14 +309,15 @@ def _place_polygon_one(
     min_y, max_y = min(ys), max(ys)
     bbox_w = max_x - min_x
     bbox_d = max_y - min_y
-    margin = float(face.margin_mm or 0)
-    avail_w = bbox_w - 2 * margin
-    avail_d = bbox_d - 2 * margin
+    margin_ns, margin_ew = _resolve_margins(face, bbox_w, bbox_d)
+    avail_w = bbox_w - 2 * margin_ew
+    avail_d = bbox_d - 2 * margin_ns
 
     panel_w, panel_h, gap_col, gap_row = _orientation_dims(orientation, panel)
     walkway, walkway_group = _walkway_params(panel)
     rows, cols, positions = _grid_positions(
-        avail_w, avail_d, panel_w, panel_h, gap_col, gap_row, margin,
+        avail_w, avail_d, panel_w, panel_h, gap_col, gap_row,
+        margin_ew, margin_ns,
         walkway_col=walkway, walkway_group=walkway_group,
     )
 
@@ -338,9 +367,8 @@ def _apply_roof_type_defaults(face: RoofFace, panel: PanelSpec) -> PanelSpec:
     if not d:
         return panel
     try:
-        # 標準既定値のまま or 0（AI抽出の「記載なし」は0で返る）を未指定とみなす
-        if face.margin_mm in (500.0, 0, 0.0) and d.get("margin_mm") is not None:
-            face.margin_mm = float(d["margin_mm"])
+        # margin はここでは触らない（2026-08-13: 離隔の既定は10%ルールが
+        # _resolve_margins で自動適用される。yaml の margin_mm は廃止）
         gl, gs = panel.gap_long_mm, panel.gap_short_mm
         if gl in (25.0, 0, 0.0) and d.get("gap_long_mm") is not None:
             gl = float(d["gap_long_mm"])
@@ -353,32 +381,63 @@ def _apply_roof_type_defaults(face: RoofFace, panel: PanelSpec) -> PanelSpec:
         return panel
 
 
+def _margins_are_auto(face: RoofFace) -> bool:
+    """離隔が明示されておらず、10%ルールの自動値が使われる面かどうか。"""
+    ns = float(getattr(face, "margin_ns_mm", 0) or 0)
+    ew = float(getattr(face, "margin_ew_mm", 0) or 0)
+    return ns <= 0 and ew <= 0 and float(face.margin_mm or 0) <= 0
+
+
 def _layout_face(face: RoofFace, panel: PanelSpec) -> None:
     """1 屋根面に対してパネルを配置し、face を in-place で更新する。
 
     - orientation=AUTO は portrait/landscape を両方計算して枚数の多い方を採用。
     - target_panel_count があれば上限として末尾から間引く（行優先で前から残す）。
       None/0/負値は「枚数未指定」= 収まる最大枚数をそのまま採用。
+    - 作図ルールの優先順位（②現調指定 > ③標準離隔）により、目標枚数が
+      10%ルールの自動離隔では収まらない場合に限り、従来標準の500mmまで
+      離隔を緩めて再配置する（現調で明示された離隔は緩めない）。
     """
     shape = (face.shape or "rectangle").lower()
 
-    def _compute(orientation: str) -> Tuple[int, int, List[PanelRect]]:
-        if shape == "polygon":
-            return _place_polygon_one(face, panel, orientation)
-        return _place_rectangle_one(face, panel, orientation)
+    def _compute_best(f: RoofFace) -> Tuple[int, int, List[PanelRect]]:
+        def _compute(orientation: str) -> Tuple[int, int, List[PanelRect]]:
+            if shape == "polygon":
+                return _place_polygon_one(f, panel, orientation)
+            return _place_rectangle_one(f, panel, orientation)
 
-    want = (face.orientation or Orientation.AUTO).lower()
-    if want == Orientation.AUTO:
-        r_p, c_p, rects_p = _compute(Orientation.PORTRAIT)
-        r_l, c_l, rects_l = _compute(Orientation.LANDSCAPE)
-        if len(rects_l) > len(rects_p):
-            rows, cols, rects = r_l, c_l, rects_l
-        else:
-            rows, cols, rects = r_p, c_p, rects_p
-    elif want == Orientation.LANDSCAPE:
-        rows, cols, rects = _compute(Orientation.LANDSCAPE)
-    else:  # PORTRAIT または未知 → portrait 既定
-        rows, cols, rects = _compute(Orientation.PORTRAIT)
+        want = (f.orientation or Orientation.AUTO).lower()
+        if want == Orientation.AUTO:
+            cand_p = _compute(Orientation.PORTRAIT)
+            cand_l = _compute(Orientation.LANDSCAPE)
+            wanted_n = int(f.target_panel_count or 0)
+            if wanted_n > 0:
+                fits = [c for c in (cand_p, cand_l)
+                        if c[1] > 0 and len(c[2]) >= wanted_n]
+                if len(fits) == 2:
+                    # 両向きとも目標を満たす場合は、最終行の欠け（端数）が
+                    # 少ない向きを選ぶ（例: 4枚は 3列+1枚 より 2列×2行。
+                    # 正解図面の均整の取れた並びに寄せる。同点は縦置き優先）
+                    fits.sort(key=lambda c: (c[1] - (wanted_n % c[1])) % c[1])
+                    return fits[0]
+                if len(fits) == 1:
+                    return fits[0]
+            if len(cand_l[2]) > len(cand_p[2]):
+                return cand_l
+            return cand_p
+        if want == Orientation.LANDSCAPE:
+            return _compute(Orientation.LANDSCAPE)
+        return _compute(Orientation.PORTRAIT)  # PORTRAIT または未知 → portrait 既定
+
+    rows, cols, rects = _compute_best(face)
+
+    wanted = int(face.target_panel_count or 0)
+    if wanted > 0 and len(rects) < wanted and _margins_are_auto(face):
+        relaxed = replace(face, margin_ns_mm=500.0, margin_ew_mm=500.0,
+                          panels=[])
+        r2, c2, rects2 = _compute_best(relaxed)
+        if len(rects2) > len(rects):
+            rows, cols, rects = r2, c2, rects2
 
     # target 上限で間引く（行優先＝走査順で前から残し、末尾を切る）
     target = face.target_panel_count

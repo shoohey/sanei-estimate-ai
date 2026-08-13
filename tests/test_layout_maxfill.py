@@ -23,7 +23,12 @@ def _make_spec(roof_type=RoofType.KAWARA, target=None, margin=500.0,
                         gap_long_mm=gap_long, gap_short_mm=gap_short),
         roof_faces=[RoofFace(name="面1", roof_type=roof_type,
                              width_mm=10000, depth_mm=8000,
-                             margin_mm=margin, orientation=Orientation.AUTO,
+                             margin_mm=margin,
+                             # 10%自動離隔ルール(2026-08-13)から独立させるため
+                             # 500(旧標準)のときは方向別で明示する
+                             margin_ns_mm=(margin if margin == 500.0 else 0.0),
+                             margin_ew_mm=(margin if margin == 500.0 else 0.0),
+                             orientation=Orientation.AUTO,
                              target_panel_count=target)],
     )
 
@@ -56,7 +61,7 @@ def test_positive_target_still_limits():
 
 
 def test_rikuyane_defaults_reduce_count():
-    """陸屋根は行間500mmの既定値が効いて瓦屋根より枚数が減ること。"""
+    """陸屋根は行間235mm（TUG段間）の既定値が効いて瓦屋根より枚数が減ること。"""
     kawara = place_panels(_make_spec(roof_type=RoofType.KAWARA))
     riku = place_panels(_make_spec(roof_type=RoofType.RIKUYANE))
     assert riku.roof_faces[0].panel_count < kawara.roof_faces[0].panel_count, \
@@ -68,7 +73,7 @@ def test_explicit_gap_wins_over_roof_defaults():
     explicit = place_panels(_make_spec(roof_type=RoofType.RIKUYANE, gap_long=30.0))
     kawara30 = place_panels(_make_spec(roof_type=RoofType.KAWARA, gap_long=30.0))
     assert explicit.roof_faces[0].panel_count == kawara30.roof_faces[0].panel_count, \
-        "明示した行間30mmが陸屋根既定値500mmで上書きされている"
+        "明示した行間30mmが陸屋根既定値235mmで上書きされている"
 
 
 def test_explicit_margin_wins():
@@ -84,21 +89,27 @@ def test_target_specified_keeps_measured_gaps():
 
 
 def test_zero_values_treated_as_unspecified():
-    """AI抽出の「記載なし=0」のマージン・隙間にも屋根種別既定値が効くこと。"""
+    """AI抽出の「記載なし=0」の隙間に屋根種別既定値が効き、
+    マージン=0 は10%ルールの自動離隔になること（2026-08-13 作図ルール対応）。"""
     spec = _make_spec(roof_type=RoofType.RIKUYANE, target=None,
                       margin=0.0, gap_long=0.0, gap_short=0.0)
     spec = place_panels(spec)
-    assert spec.roof_faces[0].margin_mm == 500.0, \
-        f"margin=0（未指定）に既定値500が適用されるはずが {spec.roof_faces[0].margin_mm}"
-    assert spec.panel.gap_long_mm == 500.0, "gap=0（未指定）に陸屋根行間500が適用されるはず"
+    assert spec.roof_faces[0].margin_mm == 0.0, \
+        "margin=0（未指定）は0のまま＝10%ルールが配置時に自動適用される"
+    # 10%ルール適用の実証: 屋根10000×8000 → EW1000/NS800 の離隔内に全パネル
+    f = spec.roof_faces[0]
+    for pr in f.panels:
+        assert pr.x_mm >= 1000 - 1 and pr.x_mm + pr.w_mm <= 10000 - 1000 + 1
+        assert pr.y_mm >= 800 - 1 and pr.y_mm + pr.h_mm <= 8000 - 800 + 1
+    assert spec.panel.gap_long_mm == 235.0, "gap=0（未指定）に陸屋根行間235（TUG段間）が適用されるはず"
 
 
 def test_effective_gap_reflected_in_spec():
     """陸屋根既定値が効いた場合、spec.panel の隙間にも反映され
     図面の間隔注記と実配置が食い違わないこと（レビュー指摘 med）。"""
     spec = place_panels(_make_spec(roof_type=RoofType.RIKUYANE, target=None))
-    assert spec.panel.gap_long_mm == 500.0, \
-        f"spec.panel.gap_long_mm が {spec.panel.gap_long_mm}（凡例が実配置500mmと不一致になる）"
+    assert spec.panel.gap_long_mm == 235.0, \
+        f"spec.panel.gap_long_mm が {spec.panel.gap_long_mm}（凡例が実配置235mmと不一致になる）"
     # 既定値が効かないケース（瓦・枚数指定あり）では 25 のまま
     spec2 = place_panels(_make_spec(roof_type=RoofType.KAWARA, target=None))
     assert spec2.panel.gap_long_mm == 25.0
