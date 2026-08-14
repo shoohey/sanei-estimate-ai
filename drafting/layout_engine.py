@@ -388,23 +388,43 @@ def _margins_are_auto(face: RoofFace) -> bool:
     return ns <= 0 and ew <= 0 and float(face.margin_mm or 0) <= 0
 
 
-def _layout_face(face: RoofFace, panel: PanelSpec) -> None:
+def _relaxed_margin_values(face: RoofFace) -> Tuple[float, float]:
+    """緩和時の離隔値: 各方向とも min(10%自動値, 500mm)。
+
+    片方向だけが広すぎて指示枚数が入らないケース（例: 番田交番 幅8800 →
+    EW自動880を500へ緩和、NS自動345はそのまま）に対応するため、
+    一律500ではなく方向別に自動値と500の小さい方を使う。
+    """
+    if (face.shape or "rectangle").lower() == "polygon" and face.polygon_mm:
+        w, d = face.bounds_mm()
+    else:
+        w, d = float(face.width_mm or 0), float(face.depth_mm or 0)
+    ns_auto = min(MARGIN_RATE * d, MARGIN_CAP_MM)
+    ew_auto = min(MARGIN_RATE * w, MARGIN_CAP_MM)
+    return min(ns_auto, 500.0), min(ew_auto, 500.0)
+
+
+def _layout_face(face: RoofFace, panel: PanelSpec) -> List[str]:
     """1 屋根面に対してパネルを配置し、face を in-place で更新する。
 
     - orientation=AUTO は portrait/landscape を両方計算して枚数の多い方を採用。
     - target_panel_count があれば上限として末尾から間引く（行優先で前から残す）。
       None/0/負値は「枚数未指定」= 収まる最大枚数をそのまま採用。
-    - 作図ルールの優先順位（②現調指定 > ③標準離隔）により、目標枚数が
-      10%ルールの自動離隔では収まらない場合に限り、従来標準の500mmまで
-      離隔を緩めて再配置する（現調で明示された離隔は緩めない）。
+
+    指示枚数最優先ルール（2026-08-13 顧客指示）:
+    設置予定枚数は目安ではなく設計条件。10%自動離隔で収まらない場合、
+    下位条件を新ルールの再検討順に段階的に緩和して配置を試みる
+    （①離隔を標準500mm相当へ ②点検通路を省略 ③両方 ④明示向きの変更）。
+    現調で明示された離隔は緩めない。緩和内容は戻り値の注記リストで返し、
+    呼び出し側（place_panels）が warnings に記録する。
     """
     shape = (face.shape or "rectangle").lower()
 
-    def _compute_best(f: RoofFace) -> Tuple[int, int, List[PanelRect]]:
+    def _compute_best(f: RoofFace, p: PanelSpec) -> Tuple[int, int, List[PanelRect]]:
         def _compute(orientation: str) -> Tuple[int, int, List[PanelRect]]:
             if shape == "polygon":
-                return _place_polygon_one(f, panel, orientation)
-            return _place_rectangle_one(f, panel, orientation)
+                return _place_polygon_one(f, p, orientation)
+            return _place_rectangle_one(f, p, orientation)
 
         want = (f.orientation or Orientation.AUTO).lower()
         if want == Orientation.AUTO:
@@ -429,15 +449,64 @@ def _layout_face(face: RoofFace, panel: PanelSpec) -> None:
             return _compute(Orientation.LANDSCAPE)
         return _compute(Orientation.PORTRAIT)  # PORTRAIT または未知 → portrait 既定
 
-    rows, cols, rects = _compute_best(face)
+    rows, cols, rects = _compute_best(face, panel)
+    notes: List[str] = []
 
     wanted = int(face.target_panel_count or 0)
-    if wanted > 0 and len(rects) < wanted and _margins_are_auto(face):
-        relaxed = replace(face, margin_ns_mm=500.0, margin_ew_mm=500.0,
-                          panels=[])
-        r2, c2, rects2 = _compute_best(relaxed)
-        if len(rects2) > len(rects):
-            rows, cols, rects = r2, c2, rects2
+    if wanted > 0 and len(rects) < wanted:
+        name = face.name or "?"
+        margins_auto = _margins_are_auto(face)
+        has_walkway = float(panel.walkway_mm or 0) > 0
+        ns_r, ew_r = _relaxed_margin_values(face)
+        relaxed_face = replace(face, margin_ns_mm=ns_r, margin_ew_mm=ew_r,
+                               panels=[])
+        no_walkway = replace(panel, walkway_mm=0.0)
+        explicit_ori = (face.orientation or Orientation.AUTO).lower() \
+            != Orientation.AUTO
+
+        candidates: List[Tuple[str, RoofFace, PanelSpec]] = []
+        if margins_auto:
+            candidates.append((
+                f"面『{name}』: 指示{wanted}枚を配置するため、屋根端離隔を"
+                f"標準値（南北{ns_r:.0f}mm/東西{ew_r:.0f}mm）に緩和しました（要確認）",
+                relaxed_face, panel))
+        if has_walkway:
+            candidates.append((
+                f"面『{name}』: 指示{wanted}枚を配置するため、点検通路を"
+                "省略しました（要確認）",
+                face, no_walkway))
+        if margins_auto and has_walkway:
+            candidates.append((
+                f"面『{name}』: 指示{wanted}枚を配置するため、屋根端離隔の緩和"
+                f"（南北{ns_r:.0f}mm/東西{ew_r:.0f}mm）と点検通路の省略を"
+                "併用しました（要確認）",
+                relaxed_face, no_walkway))
+        if explicit_ori:
+            # 優先順位: ③枚数 > ⑥配置方法（向き）。明示向きでも入らなければ
+            # 向きの変更を最後の手段として試す
+            for note, f_c, p_c in list(candidates) or [("", face, panel)]:
+                flipped = replace(f_c, orientation=Orientation.AUTO, panels=[])
+                candidates.append((
+                    (note + "・" if note else f"面『{name}』: ")
+                    + "指示枚数配置のためパネルの向きを再検討しました（要確認）",
+                    flipped, p_c))
+
+        best = (rows, cols, rects, "")
+        for note, f_c, p_c in candidates:
+            r_c, c_c, rects_c = _compute_best(f_c, p_c)
+            if len(rects_c) >= wanted:
+                rows, cols, rects = r_c, c_c, rects_c
+                notes.append(note)
+                break
+            if len(rects_c) > len(best[2]):
+                best = (r_c, c_c, rects_c, note)
+        else:
+            # どの緩和でも指示枚数に届かない → 最も多く置ける案を採用しつつ
+            # 「指示枚数配置不可」は place_panels 側で詳細警告される
+            if len(best[2]) > len(rects):
+                rows, cols, rects = best[0], best[1], best[2]
+                if best[3]:
+                    notes.append(best[3])
 
     # target 上限で間引く（行優先＝走査順で前から残し、末尾を切る）
     target = face.target_panel_count
@@ -456,6 +525,35 @@ def _layout_face(face: RoofFace, panel: PanelSpec) -> None:
     face.rows = rows
     face.cols = cols
     face.panel_count = len(rects)
+    return notes
+
+
+def _shortage_warning(face: RoofFace, panel: PanelSpec, wanted: int) -> str:
+    """指示枚数に届かない場合の詳細警告（指示枚数最優先ルール 2026-08-13）。
+
+    指示枚数・配置可能枚数・不足枚数・不足スペースの目安・配置できる可能性の
+    ある条件を明記する（勝手に枚数を減らして完成扱いにしないための確認事項）。
+    """
+    placed = int(face.panel_count or 0)
+    missing = wanted - placed
+    rows = max(int(face.rows or 0), 1)
+    cols = max(int(face.cols or 0), 1)
+    ori = (face.panels[0].orientation if face.panels
+           else (face.orientation or Orientation.PORTRAIT))
+    panel_w, panel_h, gap_col, gap_row = _orientation_dims(ori, panel)
+    extra_cols = int(math.ceil(missing / rows))
+    extra_rows = int(math.ceil(missing / cols))
+    extra_w = extra_cols * (panel_w + gap_col)
+    extra_d = extra_rows * (panel_h + gap_row)
+    return (
+        f"【指示枚数配置不可】面『{face.name or '?'}』: "
+        f"指示{wanted}枚に対し配置可能は{placed}枚（{rows}行×{cols}列が上限）で、"
+        f"{missing}枚不足しています。枚数は変更していません。"
+        f"目安: 幅をあと約{extra_w:,.0f}mm 確保できれば{extra_cols}列、"
+        f"または奥行をあと約{extra_d:,.0f}mm 確保できれば{extra_rows}行の追加が"
+        "可能です。屋根の設置可能範囲・離隔・点検通路・障害物・パネルの向きを"
+        "ご確認のうえ、条件を調整してください。"
+    )
 
 
 # =============================================================
@@ -653,14 +751,13 @@ def place_panels(spec: DraftingSpec) -> DraftingSpec:
         try:
             eff_panel = _apply_roof_type_defaults(face, panel)
             effective_panels.append(eff_panel)
-            _layout_face(face, eff_panel)
-            # 目標枚数に届かない配置は見積枚数のズレに直結するため必ず警告する
+            relax_notes = _layout_face(face, eff_panel)
+            spec.warnings.extend(relax_notes)
+            # 指示枚数最優先ルール: 緩和を尽くしても届かない場合は
+            # 枚数を変更せず「指示枚数配置不可」の詳細確認事項を出す
             tgt = int(face.target_panel_count or 0)
             if tgt > 0 and face.panel_count < tgt:
-                spec.warnings.append(
-                    f"面『{face.name or '?'}』: 目標{tgt}枚に対し"
-                    f"{face.panel_count}枚しか配置できません。"
-                    "屋根寸法・離隔・点検通路の設定を確認してください。")
+                spec.warnings.append(_shortage_warning(face, eff_panel, tgt))
         except Exception as exc:  # 1 面の失敗で全体を止めない
             # 当該面は空配置として続行し、所見に残す
             face.panels = []
@@ -695,7 +792,28 @@ def place_panels(spec: DraftingSpec) -> DraftingSpec:
         except Exception:
             pass
 
-    return spec.recompute_totals()
+    spec.recompute_totals()
+
+    # 最終チェック（指示枚数最優先ルール）: システム欄の表記を実配置と
+    # 常に一致させる（実配置6枚なのにシステム欄8枚のまま、という図面内
+    # 不一致を防ぐ。指示枚数との不一致は上の【指示枚数配置不可】警告と
+    # 図面上の「要設計確認」表示で扱う）
+    try:
+        w = int(spec.panel.output_w or 0)
+        # recompute_totals は配置0枚時に target 合計へフォールバックするため、
+        # ここでは実配置枚数の合計を直接使う（0枚の図面のシステム欄に指示枚数が
+        # 表示される不整合の防止。Codexレビュー指摘）
+        placed_total = sum(int(f.panel_count or 0)
+                           for f in (spec.roof_faces or []) if f is not None)
+        if w > 0 and placed_total > 0:
+            maker = (spec.panel.maker or "").strip()
+            kw = round(placed_total * w / 1000.0, 3)
+            spec.title.system_text = (
+                f"{maker + ' ' if maker else ''}{w}W×{placed_total}枚"
+                f"　{kw:.3f}kW")
+    except Exception:
+        pass
+    return spec
 
 
 # =============================================================

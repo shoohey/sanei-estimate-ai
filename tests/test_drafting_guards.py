@@ -102,14 +102,18 @@ def test_no_rearrange_when_origins_valid():
 
 
 def test_target_shortfall_warning():
-    """屋根に入り切らない目標枚数 → 未達警告（silent不足の防止）。"""
+    """指示枚数に届かない場合、枚数を勝手に変更せず「指示枚数配置不可」の
+    詳細確認事項（指示・配置可能・不足・不足スペース目安）が出ること
+    （指示枚数最優先ルール 2026-08-13）。"""
     spec = DraftingSpec()
     spec.panel = _xsol_panel()
     spec.roof_faces = [_face(5000, 4000, target=100)]
     place_panels(spec)
     assert spec.roof_faces[0].panel_count < 100
-    assert any("しか配置できません" in w for w in spec.warnings), \
-        f"目標未達の警告が出るはず: {spec.warnings}"
+    w = next((x for x in spec.warnings if "指示枚数配置不可" in x), None)
+    assert w, f"配置不可の確認事項が出るはず: {spec.warnings}"
+    assert "指示100枚" in w and "不足" in w and "mm" in w, \
+        f"指示・不足・スペース目安が明記されるはず: {w}"
 
 
 def test_polygon_offset_vertices_no_shift():
@@ -244,7 +248,7 @@ def test_target_priority_relaxes_auto_margin():
     spec2.roof_faces = [f]
     place_panels(spec2)
     assert spec2.roof_faces[0].panel_count < 40, "明示離隔は緩和されないはず"
-    assert any("しか配置できません" in w for w in spec2.warnings)
+    assert any("指示枚数配置不可" in w for w in spec2.warnings)
 
 
 def test_kamakura_golden_case():
@@ -265,6 +269,54 @@ def test_kamakura_golden_case():
     for pr in f.panels:
         assert pr.x_mm >= 598 - 1 and pr.x_mm + pr.w_mm <= 5980 - 598 + 1
         assert pr.y_mm >= 447 - 1 and pr.y_mm + pr.h_mm <= 4470 - 447 + 1
+
+
+def test_banda_koban_golden_case():
+    """相模原警察署 番田交番（465W×8枚指示）: 点検通路800mm既定と10%離隔では
+    3列×2行=6枚しか入らないが、指示枚数最優先ルールの緩和（離隔標準化＋
+    通路省略）で正解図面どおり4列×2行=8枚が配置されること。
+    （実障害: AIが勝手に6枚へ減らして図面を完成させていた）"""
+    spec = DraftingSpec()
+    spec.panel = PanelSpec(maker="Next Energy", model="NER108M465B-NE",
+                           output_w=465, long_mm=1762, short_mm=1134,
+                           gap_long_mm=235, gap_short_mm=10,
+                           walkway_mm=800, walkway_every_n_cols=2)
+    spec.roof_faces = [_face(8800, 3449, target=8, name="陸屋根",
+                             roof_type="rikuyane", orientation="landscape")]
+    place_panels(spec)
+    f = spec.roof_faces[0]
+    assert f.panel_count == 8, f"指示8枚が配置されるはず: {f.panel_count}"
+    assert f.cols == 4 and f.rows == 2, f"4列×2行のはず: {f.cols}×{f.rows}"
+    assert abs(spec.total_kw - 3.72) < 0.001, spec.total_kw
+    assert any("要確認" in w for w in spec.warnings), \
+        "緩和内容（通路省略等）が確認事項として出るはず"
+    assert not any("指示枚数配置不可" in w for w in spec.warnings), \
+        "8枚配置できたので配置不可警告は出ないはず"
+
+
+def test_system_text_matches_placed_count():
+    """システム欄の表記が実配置枚数・容量と常に一致すること（最終チェック:
+    実配置6枚なのにシステム欄8枚のままという図面内不一致の防止）。"""
+    spec = DraftingSpec()
+    spec.panel = PanelSpec(maker="Next Energy", model="NER108M465B-NE",
+                           output_w=465, long_mm=1762, short_mm=1134)
+    spec.roof_faces = [_face(8800, 3449, target=8, roof_type="rikuyane",
+                             orientation="landscape")]
+    spec.title.system_text = "Next Energy 465W×99枚　99.999kW"  # 抽出時の古い値
+    place_panels(spec)
+    assert "8枚" in spec.title.system_text, spec.title.system_text
+    assert "3.720kW" in spec.title.system_text, spec.title.system_text
+    # 実配置0枚（屋根が小さすぎる等）ではシステム欄を指示枚数で上書きしない
+    # （recompute_totalsのtargetフォールバックに引きずられない。Codex指摘）
+    spec0 = DraftingSpec()
+    spec0.panel = PanelSpec(maker="Next Energy", model="NER108M465B-NE",
+                            output_w=465, long_mm=1762, short_mm=1134)
+    spec0.roof_faces = [_face(500, 500, target=2)]  # パネル1枚も入らない屋根
+    spec0.title.system_text = "抽出時の表記"
+    place_panels(spec0)
+    assert spec0.roof_faces[0].panel_count == 0
+    assert spec0.title.system_text == "抽出時の表記", \
+        f"0枚時に指示枚数で上書きしてはいけない: {spec0.title.system_text}"
 
 
 def test_engine_reproduces_correct_counts():
@@ -302,6 +354,8 @@ def main():
         test_margin_explicit_wins,
         test_target_priority_relaxes_auto_margin,
         test_kamakura_golden_case,
+        test_banda_koban_golden_case,
+        test_system_text_matches_placed_count,
         test_engine_reproduces_correct_counts,
     ]
     print("=== 製図品質ガードテスト（API不要） ===")

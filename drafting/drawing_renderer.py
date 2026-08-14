@@ -791,6 +791,16 @@ def _draw_right_column(ax, spec, x0, w, tb_top, aspect) -> None:
     y = _draw_info_box(ax, spec, x0, w, y, is_string)
     y -= gap
 
+    # 指示枚数配置不可（指示枚数最優先ルール 2026-08-13）: 勝手に枚数を
+    # 減らした図面を完成扱いにしないため、図面上に要設計確認を明示する
+    if any("指示枚数配置不可" in str(wn) for wn in (spec.warnings or [])):
+        _text(ax, x0, y, "※ 要設計確認：指示枚数配置不可",
+              size=10, bold=True, color="#c53030")
+        y -= 4.5
+        _text(ax, x0, y, "（指示枚数を配置できません。確認事項をご確認ください）",
+              size=7, color="#c53030")
+        y -= gap
+
     # --- 系統表（ストリングス図のみ） ---
     if is_string and spec.strings:
         y = _draw_string_table(ax, spec, x0, w, y, aspect)
