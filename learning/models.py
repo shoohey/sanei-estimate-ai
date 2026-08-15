@@ -6,7 +6,8 @@
 from typing import Optional
 from pydantic import BaseModel, Field
 
-# 見積書の6カテゴリ（models/estimate_data.py の CategoryType と同じ表記）
+# 見積書のカテゴリ（models/estimate_data.py の CategoryType と同じ表記）。
+# v1の6カテゴリ + v2の4大分類（2026-08-15 顧客ルールブック【見積側】3条）
 ESTIMATE_CATEGORIES = [
     "支給品",
     "材料費",
@@ -14,6 +15,10 @@ ESTIMATE_CATEGORIES = [
     "その他・諸経費等",
     "付帯工事",
     "特記事項",
+    "共通仮設工事",
+    "太陽光発電システム機器",
+    "電材",
+    "設置工事",
 ]
 
 

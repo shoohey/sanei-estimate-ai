@@ -252,6 +252,11 @@ class DraftingSpec:
     confidence: dict = field(default_factory=dict)
     # 抽出時の所見・要確認事項（人間が確認すべき点）
     warnings: list = field(default_factory=list)
+    # 設計確定情報の素材（2026-08-15 顧客ルールブック【図面側】10条）。
+    # 電圧区分・事業区分・PCS設置位置・配管ルート・配線概算距離・貫通箇所・
+    # 盤改造・支給品などを抽出時に取得し、design_handoff.build_design_handoff で
+    # 見積側へ引き継ぐ完全な「設計確定情報」に組み立てる。不明は「未確認」。
+    handoff: dict = field(default_factory=dict)
 
     # ---- 派生計算 ----
     def recompute_totals(self) -> "DraftingSpec":
@@ -304,6 +309,7 @@ def spec_from_dict(d: dict) -> DraftingSpec:
     spec.notes = d.get("notes", "")
     spec.confidence = d.get("confidence", {}) or {}
     spec.warnings = d.get("warnings", []) or []
+    spec.handoff = d.get("handoff", {}) or {}
     spec.total_panels = int(d.get("total_panels", 0) or 0)
     spec.total_kw = float(d.get("total_kw", 0) or 0)
 

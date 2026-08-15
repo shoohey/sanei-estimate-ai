@@ -35,19 +35,31 @@ logger = logging.getLogger(__name__)
 # 見積カテゴリ名 → pricing_rules.yaml のリスト名
 # （特記事項は対応リストが無いため学習反映の対象外）
 CATEGORY_TO_LIST = {
+    # v1（旧6分類）
     "支給品": "supplied_items",
     "材料費": "material_items",
     "施工費": "construction_items",
     "その他・諸経費等": "overhead_items",
     "付帯工事": "additional_items",
+    # v2（2026-08-15 ルールブックの4大分類。機器は単価マスター駆動のため
+    # yamlリストを持たず、単価学習の反映先も単価マスター側＝ここには無い）
+    "共通仮設工事": "setup_items",
+    "電材": "wiring_items",
+    "設置工事": "install_items",
 }
 
 # 項目構成（どの項目が載るか）を学習で変更しないカテゴリ（2026-08-13 顧客要望）。
 # 例外案件で学習された item_add / item_suppress がデフォルト化し、
 # 「材料が異常に多い」「支給品が全く無い」構成が全案件に波及した実害への対処。
 # 過去に保存済みのルールもここで適用スキップされる（削除は学習センターUIから）。
-FIXED_STRUCTURE_CATEGORIES = ("支給品", "材料費")
-_FIXED_STRUCTURE_LISTS = ("supplied_items", "material_items")
+FIXED_STRUCTURE_CATEGORIES = (
+    "支給品", "材料費",
+    # v2の4大分類も項目構成は固定（ルールブック3条: 大分類・構成は固定、
+    # 機器・電材の構成は設計確定情報から決まる。学習は単価のみ）
+    "共通仮設工事", "太陽光発電システム機器", "電材", "設置工事",
+)
+_FIXED_STRUCTURE_LISTS = ("supplied_items", "material_items",
+                          "setup_items", "wiring_items", "install_items")
 
 # panel_rate（枚数連動）項目に適用できる学習単価の上限。
 # 正規見積の「一式 ¥1,112,400」を単価として学習した不正ルールが枚数連動項目に
@@ -147,8 +159,12 @@ def _apply_price_override(rules: dict, rule: dict) -> None:
                     continue
             old_price = item.get("unit_price")
             if old_price == new_price:
-                continue  # 既に学習値（note の重複追記を防ぐ）
+                item["learned_price"] = True  # 既に学習値でもタグは付与する
+                continue  # note の重複追記を防ぐ
             item["unit_price"] = new_price
+            # 学習単価は正規見積（客出し価格）由来。v2ビルダーが粗利率を
+            # 重ね掛けしないよう「客出し実績値」タグを付ける（Codexレビュー指摘）
+            item["learned_price"] = True
             old_disp = f"¥{int(old_price):,}" if old_price is not None else "¥?"
             item["note"] = (f"{item.get('note', '')}"
                             f"（学習補正: {old_disp}→¥{new_price:,}）")

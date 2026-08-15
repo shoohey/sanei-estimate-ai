@@ -401,3 +401,200 @@ additional_items:
     pricing_method: "lump_formula"
     note: "参考値: PV容量連動（最低5万円）"
     is_manual: false
+
+# =====================================================
+# 客出し見積 v2（2026-08-15 顧客ルールブック【見積側】）
+# 大分類は「1.共通仮設工事 2.太陽光発電システム機器 3.電材 4.設置工事」に固定。
+# 「支給品」「材料費」等の独自大分類は作らない（支給品は明細の属性）。
+# 機器（equipment）は設計確定情報＋単価マスターから動的に組み立てるため
+# ここにはリストを持たない。単価はすべて「原価」。客出しは
+# margin_rate（粗利率）を乗せて算出する（原価と客出しの分離＝6条）。
+# 初期単価は鎌倉警察署 滑川交番様の原価表（2026-08-13）準拠の低圧標準値。
+# =====================================================
+estimate_format: "v2"   # "v1" にすると従来の6分類（支給品/材料費/施工費…）に戻る
+margin_rate: 0.0        # 粗利率（0.10 = 原価+10%を客出し単価にする）
+
+setup_items:
+  - "no": 1
+    description: "資材置場"
+    remarks: "無料にて御貸与願います"
+    quantity: ""
+    quantity_unit: ""
+    unit_price: 0
+    pricing_method: "fixed"
+    note: "貸与依頼（金額なし）"
+  - "no": 2
+    description: "工事用電気(100V)"
+    remarks: "無料にて御貸与願います"
+    quantity: ""
+    quantity_unit: ""
+    unit_price: 0
+    pricing_method: "fixed"
+    note: "貸与依頼（金額なし）"
+  - "no": 3
+    description: "作業員トイレ"
+    remarks: "無料にて御貸与願います"
+    quantity: ""
+    quantity_unit: ""
+    unit_price: 0
+    pricing_method: "fixed"
+    note: "貸与依頼（金額なし）"
+  - "no": 4
+    description: "足場設置工事"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 180000
+    pricing_method: "fixed"
+    note: "低圧標準（鎌倉滑川交番原価準拠）。不要な場合は0に"
+  - "no": 5
+    description: "産廃処分費"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 30000
+    pricing_method: "fixed"
+    note: "低圧標準"
+  - "no": 6
+    description: "諸経費"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 75000
+    pricing_method: "fixed"
+    note: "低圧標準"
+
+wiring_items:
+  # 顧客ルールブック5条の電材リスト。単価が案件で変わる項目は手動入力とし、
+  # 学習センターの単価学習（unit_price_override）で補正されていく
+  - "no": 1
+    description: "ブレーカー"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 49000
+    pricing_method: "fixed"
+    note: "低圧標準（鎌倉原価準拠）"
+  - "no": 2
+    description: "盤・スペースボックス"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 0
+    pricing_method: "fixed"
+    is_manual: true
+    note: "案件により選定（単価を入力してください）"
+  - "no": 3
+    description: "DCケーブル"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 0
+    pricing_method: "fixed"
+    is_manual: true
+    note: "DC配線概算距離から算出（手動入力）"
+  - "no": 4
+    description: "ACケーブル"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 0
+    pricing_method: "fixed"
+    is_manual: true
+    note: "AC配線概算距離から算出（手動入力）"
+  - "no": 5
+    description: "通信線"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 0
+    pricing_method: "fixed"
+    is_manual: true
+    note: "案件により算出（手動入力）"
+  - "no": 6
+    description: "接地線"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 0
+    pricing_method: "fixed"
+    is_manual: true
+    note: "案件により算出（手動入力）"
+  - "no": 7
+    description: "配管"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 40000
+    pricing_method: "fixed"
+    note: "配管・配管支持材（鎌倉原価準拠）"
+  - "no": 8
+    description: "支持材"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 0
+    pricing_method: "fixed"
+    is_manual: true
+    note: "案件により算出（手動入力）"
+  - "no": 9
+    description: "ボックス類"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 0
+    pricing_method: "fixed"
+    is_manual: true
+    note: "案件により算出（手動入力）"
+
+install_items:
+  - "no": 1
+    description: "パネル・架台設置工事"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 120000
+    pricing_method: "fixed"
+    note: "低圧標準（鎌倉8枚 原価準拠。大型案件は枚数に応じ手動調整）"
+  - "no": 2
+    description: "PCS設置工事"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 0
+    pricing_method: "fixed"
+    is_manual: true
+    note: "PCS台数・設置位置により算出（手動入力）"
+  - "no": 3
+    description: "配線・配管工事"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 180000
+    pricing_method: "fixed"
+    note: "低圧標準（鎌倉原価準拠）"
+  - "no": 4
+    description: "電気工事"
+    remarks: "※停電工事、分電盤交換工事含む"
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 280000
+    pricing_method: "fixed"
+    note: "低圧標準（鎌倉原価準拠）"
+  - "no": 5
+    description: "盤改造・交換工事"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 0
+    pricing_method: "fixed"
+    is_manual: true
+    note: "設計確定情報「盤改造・交換の有無」がありの場合に入力"
+  - "no": 6
+    description: "コア抜き工事"
+    remarks: ""
+    quantity: "1"
+    quantity_unit: "式"
+    unit_price: 50000
+    pricing_method: "fixed"
+    note: "低圧標準（貫通箇所がある場合。不要なら0に）"

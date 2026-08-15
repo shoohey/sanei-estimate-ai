@@ -168,6 +168,142 @@ def _fmt_qty(v) -> str:
 # 反映
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# v2: 支給品の属性化（2026-08-15 顧客ルールブック【見積側】4条）
+# 「支給品」は大分類ではなく明細の属性。支給品にしても明細は
+# 太陽光発電システム機器カテゴリに残し、備考「御支給品」・金額0円とする。
+# 工事費（設置工事カテゴリ）は0円にしない。
+# ---------------------------------------------------------------------------
+
+def snapshot_equipment(estimate: EstimateData) -> dict:
+    """機器カテゴリの原本（購入価格つき）を控える（v2属性モード用）。
+
+    設計確定情報「支給品」で生成時に¥0化された明細があるため、
+    生成側が控えた購入価格つきスナップショット（equipment_purchase_snapshot）
+    を優先する。無い場合（旧データ等）は現在の明細を原本とする。
+    """
+    purchase = getattr(estimate, "equipment_purchase_snapshot", None) or []
+    if purchase:
+        return {"equipment": copy.deepcopy(purchase)}
+    eq = _find_section(estimate, CategoryType.EQUIPMENT)
+    return {"equipment": copy.deepcopy(eq.items) if eq else []}
+
+
+def initial_supply_flags(estimate: EstimateData) -> dict:
+    """現在の機器明細から支給品チェックの初期状態を作る（v2属性モード用）。
+
+    設計確定情報から自動で御支給品になった明細を初期チェックONにする。
+    キーは原本（購入価格つき）側の item_key に合わせる。
+    """
+    eq = _find_section(estimate, CategoryType.EQUIPMENT)
+    if eq is None:
+        return {}
+    snap = snapshot_equipment(estimate)
+    base_keys = {item_key(it) for it in snap.get("equipment", [])}
+    flags = {}
+    for it in eq.items:
+        k = _supply_base_key(it)
+        if k in base_keys and "御支給品" in (it.remarks or ""):
+            flags[k] = True
+    return flags
+
+
+def _supply_base_key(item: LineItem) -> str:
+    """支給品属性の付け外しで変化しない照合キー。
+
+    属性ONで備考に「御支給品」行が追記されるため、素の item_key では
+    原本と照合できなくなる。御支給品行を除いた備考でキーを作る。
+    """
+    remarks = "\n".join(
+        line for line in (item.remarks or "").splitlines()
+        if line.strip() != "御支給品").strip()
+    return f"{item.description}|{remarks}"
+
+
+def apply_supply_attribute(estimate: EstimateData, snapshot: dict,
+                           flags: dict) -> None:
+    """機器明細の支給品属性を反映する（in-place・冪等）。
+
+    flags[item_key(原本)] = True → 御支給品（金額0・備考に御支給品）
+                            False（既定）→ 購入品（原本の単価マスター価格）
+    """
+    eq = _find_section(estimate, CategoryType.EQUIPMENT)
+    if eq is None:
+        return
+    originals = {_supply_base_key(it): it
+                 for it in snapshot.get("equipment", [])}
+    new_items = []
+    for it in eq.items:
+        base = originals.get(_supply_base_key(it))
+        if base is None:
+            new_items.append(it)  # 後から追加された明細はそのまま
+            continue
+        want_supplied = flags.get(item_key(base), False)
+        is_supplied = "御支給品" in (it.remarks or "")
+        if want_supplied == is_supplied:
+            # 状態変化なし: 現在の行を維持（架台・PCS等の手動編集を消さない。
+            # Codexレビュー指摘: 全行を原本から再構築すると編集が失われる）
+            new_items.append(it)
+            continue
+        it2 = copy.deepcopy(base)
+        if want_supplied:
+            it2.unit_price = 0
+            it2.amount = 0
+            it2.is_manual_input = False
+            if "御支給品" not in (it2.remarks or ""):
+                it2.remarks = (f"{it2.remarks}\n御支給品" if it2.remarks
+                               else "御支給品")
+            it2.reasoning = LineItemReasoning(
+                method=PricingMethod.SUPPLIED,
+                formula="御支給品のため ¥0",
+                source="支給品の選択（属性）",
+                note="機器は支給・設置工事は計上（工事費は0円にしない）",
+            )
+        new_items.append(it2)
+    eq.items = new_items
+    eq.calculate_totals()
+    # 小計が大きく変わるため、値引き（端数切捨て）も新しい小計で再計算する。
+    # 旧値引きのまま calculate_totals すると、支給品化で小計が減った際に
+    # 税抜合計がマイナスになり得る（Codexレビュー指摘）
+    _recompute_discount_and_totals(estimate)
+
+
+def _recompute_discount_and_totals(estimate: EstimateData) -> None:
+    """カテゴリ合計から値引き→税抜/税込を再計算する。
+
+    値引きが自動（discount_method の端数切捨て）由来のときだけ新小計で
+    再計算し、「値引き調整」で手動設定された値引きは維持する
+    （Codexレビュー指摘: 支給品切替で手動値引きが消えていた）。
+    """
+    summary = estimate.summary
+    try:
+        from pricing.knowledge_base import load_pricing_rules
+        rules = load_pricing_rules()
+    except Exception:
+        rules = {}
+    method = rules.get("discount_method", "round_down_10000")
+
+    def _auto_total(sub: int) -> int:
+        if method == "round_down_10000":
+            return (sub // 10000) * 10000
+        if method == "round_down_100000":
+            return (sub // 100000) * 100000
+        return sub
+
+    was_auto = summary.discount == \
+        _auto_total(summary.subtotal) - summary.subtotal
+    summary.subtotal = sum(c.total for c in summary.categories)
+    if was_auto:
+        summary.discount = _auto_total(summary.subtotal) - summary.subtotal
+    summary.total_before_tax = summary.subtotal + summary.discount
+    from pricing.estimate_v2 import tax_amount
+    summary.tax = tax_amount(summary.total_before_tax, rules)
+    summary.total_with_tax = summary.total_before_tax + summary.tax
+    estimate.cover.total_before_tax = summary.total_before_tax
+    estimate.cover.tax = summary.tax
+    estimate.cover.total_with_tax = summary.total_with_tax
+
+
 def apply_supply_selection(estimate: EstimateData, snapshot: dict,
                            flags: dict) -> None:
     """支給品チェック状態を見積に反映する（in-place・冪等）。

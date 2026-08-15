@@ -5,12 +5,19 @@ from enum import Enum
 
 
 class CategoryType(str, Enum):
+    # --- v1（旧形式。保存済み見積・学習データとの互換のため残す） ---
     SUPPLIED = "支給品"
     MATERIAL = "材料費"
     CONSTRUCTION = "施工費"
     OVERHEAD = "その他・諸経費等"
     ADDITIONAL = "付帯工事"
     SPECIAL_NOTES = "特記事項"
+    # --- v2（2026-08-15 顧客ルールブック【見積側】3条: 客出し見積の大分類は
+    # この4つに固定。「支給品」は大分類ではなく明細の属性として扱う） ---
+    SETUP = "共通仮設工事"
+    EQUIPMENT = "太陽光発電システム機器"
+    WIRING = "電材"
+    INSTALL = "設置工事"
 
 
 class PricingMethod(str, Enum):
@@ -97,3 +104,8 @@ class EstimateData(BaseModel):
     cover: EstimateCover = Field(default_factory=EstimateCover)
     summary: EstimateSummary = Field(default_factory=EstimateSummary)
     reasoning_list: list[str] = Field(default_factory=list, description="全根拠テキスト一覧")
+    # v2: 設計確定情報「支給品」を自動で¥0にする前の機器明細（購入価格つき）。
+    # 支給品チェックUIがOFFに戻したとき購入価格を復元するための原本
+    equipment_purchase_snapshot: list[LineItem] = Field(
+        default_factory=list,
+        description="v2: 支給品自動適用前の機器明細スナップショット")

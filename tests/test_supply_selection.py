@@ -24,6 +24,7 @@ os.environ["SANEI_DISABLE_SUPABASE"] = "1"  # 本番Supabase遮断
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import pricing.pricing_engine as pricing_engine
 import pricing.supply_selection as ss
 from models.estimate_data import CategoryType
 from models.survey_data import SurveyData
@@ -31,11 +32,28 @@ from pricing.pricing_engine import generate_estimate
 
 
 def _make_estimate():
-    survey = SurveyData()
-    survey.equipment.planned_panels = 266
-    survey.equipment.pv_capacity_kw = 135.66
-    survey.equipment.module_model = "XLN120G-510X"
-    return generate_estimate(survey, client_name="テスト株式会社")
+    """v1形式（支給品/材料費の6分類）の見積を作る。
+
+    本テストは v1 の「支給品⇄材料費 移動モード」の検証なので、
+    既定が v2（4大分類）になっても v1 を強制する。
+    v2 の属性モードは test_estimate_v2.py で検証する。
+    """
+    orig_load = pricing_engine.load_pricing_rules
+
+    def _v1_rules():
+        rules = dict(orig_load())
+        rules["estimate_format"] = "v1"
+        return rules
+
+    pricing_engine.load_pricing_rules = _v1_rules
+    try:
+        survey = SurveyData()
+        survey.equipment.planned_panels = 266
+        survey.equipment.pv_capacity_kw = 135.66
+        survey.equipment.module_model = "XLN120G-510X"
+        return generate_estimate(survey, client_name="テスト株式会社")
+    finally:
+        pricing_engine.load_pricing_rules = orig_load
 
 
 def _section(est, cat):

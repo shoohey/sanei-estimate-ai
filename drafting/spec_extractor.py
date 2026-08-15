@@ -46,7 +46,10 @@ from drafting.sample_specs import get_golden
 logger = logging.getLogger(__name__)
 
 # ---- 動作パラメータ ----
-MAX_TOTAL_IMAGES = 12          # 1 リクエストに載せる画像枚数の上限（多すぎるとAPI制限/精度低下）
+# 1 リクエストに載せる画像枚数の上限。鶴見交番の現調資料（注記付き写真20頁）の
+# ような詳細資料を全頁読むため、PDF読取上限（20頁）に合わせる（2026-08-15）。
+# 後半頁に屋根寸法・貫通穴等の重要注記があるケースで12枚打ち切りだと欠落する。
+MAX_TOTAL_IMAGES = 20
 MAX_IMAGE_BYTES = 4_500_000    # 画像1枚の base64 前バイト上限（pdf_reader と同じ閾値）
 MAX_IMAGE_DIM_PX = 4000        # 画像1枚の最大ピクセル寸法（Anthropic上限8000pxに対し安全側）
 MAX_REQUEST_BYTES = 28_000_000 # 1 リクエストの画像合計バイト上限（API上限32MBに対し安全側）
@@ -328,6 +331,30 @@ def build_user_prompt(drawing_type: str = DrawingType.LAYOUT, hint: str = "") ->
 7. ストリング系統（◯直×◯並。例「12直×5並」）→ strings（PCSごと）
 8. 図番・作成日・縮尺など（title）
 
+【現調写真からの屋根形状復元（2026-08 顧客ルールブック2条）】
+- 完成した屋根平面図が無い場合は、複数の現調写真と写真内に記載された実測寸法を
+  照合して屋根平面形状を復元する。1枚の写真だけで判断せず、同じ屋根を別方向から
+  撮影した写真を関連付けて判断する。
+- 屋根を単純な長方形として処理しない。入隅・出隅・凹凸・張り出し・立上り・
+  設置不可部分を読み取れる範囲で polygon_mm の切欠きとして反映する。
+- 写真の見た目だけから寸法を推測しない。寸法は写真・資料に記載された実測値のみを
+  使い、確認できない寸法は warnings に「寸法未確認（＋どの辺か）」と記載する。
+- 寸法の合計と屋根形状に矛盾がないか検算する。
+
+【設計確定情報の取得（2026-08 顧客ルールブック10条。見積側へ引き継ぐ）】
+資料から読み取れる場合は、トップレベルの "handoff" オブジェクト（文字列辞書）に
+以下のキーで格納する。読み取れないキーは省略する（勝手に推測しない）:
+  "電圧区分"（低圧/高圧）, "事業区分"（自家消費/FIT/FIP）,
+  "売電区分"（全量売電/余剰売電/売電なし）, "逆潮流"（あり/なし）,
+  "工事区分"（新設/増設/改修）, "蓄電池"（あり/なし）,
+  "PCSメーカー", "PCS容量", "PCS設置位置"（例: 屋内・分電盤横）,
+  "接続先", "主幹容量", "配管ルート"（写真の注記「配管ルート」等から）,
+  "DC配線概算距離", "AC配線概算距離", "貫通箇所"（「貫通穴位置」等の注記から）,
+  "盤改造・交換の有無"（「取り替える盤」等の注記から）, "支給品",
+  "その他現調条件"
+写真に「PC＆GATEWAY取付位置」「貫通穴位置」「配管ルート」「点検口」
+「取り替える盤」等の注記がある場合は対応するキーに要約して記載する。
+
 【サンエー作図ルール（抜粋。2026-08 顧客提供の作図ルール書より）】
 - 設置予定枚数（指示枚数）は目安ではなく「守るべき設計条件」。現調・指示書に
   記載があれば必ず target_panel_count と total_panels に正確に転記し、
@@ -579,6 +606,14 @@ def _normalize_parsed(parsed: dict, drawing_type: str) -> tuple[dict, list[str],
         warnings.append("roof_faces が配列ではありませんでした。屋根面情報を確認してください。")
         d["roof_faces"] = []
 
+    # --- 設計確定情報（handoff）の正規化: 文字列辞書のみ許容 ---
+    hf = d.get("handoff")
+    if isinstance(hf, dict):
+        d["handoff"] = {str(k): str(v).strip() for k, v in hf.items()
+                        if v is not None and str(v).strip()}
+    elif hf is not None:
+        d["handoff"] = {}
+
     # --- 枚数・容量の検算（30/68枚事故の再発防止。2026-08-11 分析） ---
     # 面ごと枚数の合計 vs 総枚数、kW÷W vs 総枚数 の不一致は配置枚数事故の
     # 前兆のため、warning で必ず表面化させる。
@@ -730,7 +765,31 @@ def extract_drafting_spec_from_images(
         )
         images = images[:MAX_TOTAL_IMAGES]
 
-    # リクエスト合計サイズの上限制御（base64 合計が API 上限32MBを超えると413で全滅するため）
+    # リクエスト合計サイズの上限制御（base64 合計が API 上限32MBを超えると413で全滅するため）。
+    # 後半頁を捨てるのではなく、まず全頁を均等に縮小して収める（鶴見交番の
+    # 注記付き現調写真20頁のように、後半頁に屋根寸法・貫通穴等の重要注記が
+    # あるケースで打ち切りは情報欠落になる。2026-08-15 ルールブック2条）
+    total_b64 = sum(len(img.get("image_base64") or "") for img in images)
+    if total_b64 > MAX_REQUEST_BYTES and len(images) > 1:
+        per_image_budget = max(300_000,
+                               int(MAX_REQUEST_BYTES * 3 / 4 / len(images)))
+        shrunk: list[dict] = []
+        for img in images:
+            b64 = img.get("image_base64") or ""
+            if len(b64) * 3 / 4 > per_image_budget and b64:
+                try:
+                    raw = base64.b64decode(b64)
+                    new_bytes, new_media = _downscale_image_bytes(
+                        raw, max_bytes=per_image_budget)
+                    if new_media:
+                        img = dict(img)
+                        img["image_base64"] = base64.b64encode(new_bytes).decode("ascii")
+                        img["media_type"] = new_media
+                except Exception as e:
+                    logger.warning(f"全頁縮小に失敗（元画像で続行）: {e}")
+            shrunk.append(img)
+        images = shrunk
+
     kept: list[dict] = []
     total_b64 = 0
     for img in images:

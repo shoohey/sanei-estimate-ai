@@ -43,6 +43,17 @@ def _isolated_store(tmp_path, monkeypatch):
     monkeypatch.setattr(store, "LEARNING_LOG_PATH",
                         tmp_path / "learning_history.json")
     monkeypatch.setattr(storage_backend, "is_enabled", lambda: False)
+    # 本テストは v1（施工費カテゴリ）の枚数連動計算の検証。
+    # 既定が v2（4大分類）になっても v1 を強制する
+    import pricing.pricing_engine as pricing_engine
+    orig_load = pricing_engine.load_pricing_rules
+
+    def _v1_rules():
+        rules = dict(orig_load())
+        rules["estimate_format"] = "v1"
+        return rules
+
+    monkeypatch.setattr(pricing_engine, "load_pricing_rules", _v1_rules)
     yield
 
 

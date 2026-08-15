@@ -90,6 +90,8 @@ def _reset_drafting():
     for k in ("drafting_spec_dict", "drafting_png", "drafting_pdf"):
         st.session_state[k] = None
     st.session_state["drafting_warnings"] = []
+    # 別案件を開始するため、前案件の設計確定情報が見積側へ漏れないよう破棄
+    st.session_state["design_handoff"] = None
 
 
 # =============================================================
@@ -450,6 +452,13 @@ def _generate_drawing(d: dict):
     st.session_state.drafting_pdf = out.get("pdf_bytes")
     st.session_state.drafting_spec_dict = spec_to_dict(spec)  # 配置・集計反映後
     st.session_state.drafting_learning_notes = learned_notes  # step3 で表示する
+    # 設計確定情報（2026-08-15 ルールブック図面側10条: 図面完成時に作成し、
+    # 見積側はこれを正として再判断しない）
+    try:
+        from drafting.design_handoff import build_design_handoff
+        st.session_state.design_handoff = build_design_handoff(spec)
+    except Exception:
+        st.session_state.design_handoff = None
     # 学習の材料として図面履歴を自動保存（失敗しても本体フローは止めない）
     try:
         from learning.history import save_drawing_history
@@ -509,6 +518,33 @@ def render_step3_result():
         if st.button("✏️ 内容を修正して再生成", use_container_width=True):
             st.session_state.step = 2
             st.rerun()
+
+    # 設計確定情報（図面側→見積側の引き継ぎ。ルールブック図面側10条）
+    handoff = st.session_state.get("design_handoff")
+    if handoff:
+        try:
+            from drafting.design_handoff import (
+                handoff_display_rows, unconfirmed_items)
+            n_unconfirmed = len(unconfirmed_items(handoff))
+            label = "📋 設計確定情報（見積作成に引き継がれます）"
+            if n_unconfirmed:
+                label += f" — 未確認 {n_unconfirmed}件"
+            with st.expander(label, expanded=False):
+                st.caption(
+                    "図面完成時に確定した設計情報です。見積側はこの内容を正として"
+                    "使用し、再判断しません。「未確認」の項目は現調資料に情報が"
+                    "無かったものです（勝手に補完しません）。")
+                st.table(
+                    {"項目": [r[0] for r in handoff_display_rows(handoff)],
+                     "内容": [r[1] for r in handoff_display_rows(handoff)]})
+                import json as _json
+                st.download_button(
+                    "📥 設計確定情報をJSONダウンロード",
+                    data=_json.dumps(handoff, ensure_ascii=False, indent=2),
+                    file_name=f"{fbase}_設計確定情報.json",
+                    mime="application/json", use_container_width=True)
+        except Exception:
+            pass
 
     st.divider()
     if st.button("📐 別の案件を作成（最初から）"):

@@ -13,17 +13,27 @@ from config import generate_estimate_id, TAX_RATE, COMPANY_INFO
 from datetime import date
 
 
-def generate_estimate(survey: SurveyData, client_name: str = "") -> EstimateData:
+def generate_estimate(survey: SurveyData, client_name: str = "",
+                      handoff: dict = None) -> EstimateData:
     """現調データから見積データを生成
 
     Args:
         survey: 現調シートデータ
         client_name: 宛先会社名
+        handoff: 図面側の設計確定情報（2026-08-15 ルールブック。任意）
 
     Returns:
         EstimateData: 見積書データ
     """
     rules = load_pricing_rules()
+
+    # v2（2026-08-15 顧客ルールブック【見積側】）: 大分類を
+    # 「共通仮設工事/太陽光発電システム機器/電材/設置工事」に固定した客出し形式。
+    # pricing_rules.yaml の estimate_format で切替（既定 v2。"v1" で従来6分類）
+    if str(rules.get("estimate_format", "v2")).lower() != "v1":
+        from pricing.estimate_v2 import generate_estimate_v2
+        return generate_estimate_v2(survey, rules, client_name, handoff)
+
     estimate = EstimateData()
 
     # カバーページ情報

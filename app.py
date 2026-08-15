@@ -1904,6 +1904,45 @@ def _render_step2_review():
         for fb in validation.feedback:
             st.info(f"📝 {fb}")
 
+    # 図面側の設計確定情報の引き継ぎ（v4.0 ルールブック【見積側】1条）。
+    # 同一セッションで別案件の見積を作る場合に古い設計情報を黙って継承しない
+    # よう、案件名を表示して利用可否をユーザーが選ぶ。案件名が現調シートと
+    # 一致しない場合は既定OFF＋警告（Codexレビュー指摘: 別案件への混入防止）
+    _handoff = st.session_state.get("design_handoff")
+    use_handoff = False
+    if _handoff:
+        import re as _re
+
+        def _norm_name(x):
+            return _re.sub(r"[\s　]", "", str(x or ""))
+
+        h_name = _norm_name(_handoff.get("案件名", ""))
+        if h_name == "未確認":
+            h_name = ""
+        s_name = _norm_name(survey.project.project_name)
+        # 両方の案件名が確認でき、かつ一致する場合のみ既定ON。
+        # どちらかが未読取（空）の場合も同一案件と確認できないため既定OFF
+        # （Codexレビュー指摘: 案件名未読取のPDFに前案件の設計情報が混入する）
+        same_project = bool(h_name) and bool(s_name) \
+            and (h_name in s_name or s_name in h_name)
+        st.divider()
+        if not same_project:
+            st.warning(
+                f"⚠️ 図面側の設計確定情報（案件名: {_handoff.get('案件名', '不明')}）と"
+                f"この現調シート（{survey.project.project_name or '案件名未読取'}）の"
+                f"同一性を確認できません。同じ案件と確認できた場合のみ"
+                f"チェックを入れてください。")
+        # キーを案件名の組に依存させ、案件が変わったら過去のチェック状態を
+        # 引き継がず既定値から始める（Codexレビュー指摘: 固定キーだと
+        # 前案件でONにした状態が別案件でも残る）
+        use_handoff = st.checkbox(
+            f"📋 図面側の設計確定情報を反映する"
+            f"（案件名: {_handoff.get('案件名', '不明')}）",
+            value=same_project,
+            key=f"use_design_handoff_{h_name}|{s_name}",
+            help="図面完成時に確定した枚数・容量・案件区分を正として見積を作成"
+                 "します。別案件の見積を作る場合はチェックを外してください。")
+
     # ナビゲーション
     st.divider()
     nav_cols = st.columns([1, 1, 2])
@@ -1915,7 +1954,9 @@ def _render_step2_review():
         if st.button("見積作成に進む →", type="primary", key="r_next"):
             st.session_state.survey_data = survey
             with st.spinner("見積データを生成中..."):
-                estimate = build_estimate(survey, st.session_state.client_name)
+                estimate = build_estimate(
+                    survey, st.session_state.client_name,
+                    _handoff if use_handoff else None)
                 # 確認事項への回答を根拠テキストに追記（トレーサビリティ確保）
                 _append_confirmation_log_to_estimate(estimate)
                 st.session_state.estimate_data = estimate
@@ -2317,12 +2358,16 @@ def _render_price_master_section(estimate: EstimateData):
             )
             sel = options[sel_idx]
 
-            # 既定の追加先: サービス/保証 → その他・諸経費等、それ以外 → 材料費
+            # 既定の追加先: サービス/保証 → その他・諸経費等、それ以外 → 材料費。
+            # v2見積（4大分類）にはどちらも無いため、サービス→設置工事、
+            # 部材→電材 に読み替える（先頭の共通仮設工事に誤って入る事故防止）
             kind = sel.get("item_kind")
-            default_cat = (
-                CategoryType.OVERHEAD if kind in ("service", "warranty_extension")
-                else CategoryType.MATERIAL
-            )
+            is_service = kind in ("service", "warranty_extension")
+            default_cat = (CategoryType.OVERHEAD if is_service
+                           else CategoryType.MATERIAL)
+            if default_cat not in cat_options:
+                default_cat = (CategoryType.INSTALL if is_service
+                               else CategoryType.WIRING)
             default_idx = cat_options.index(default_cat) if default_cat in cat_options else 0
 
             ac1, ac2, ac3 = st.columns([1, 1, 1.6])
@@ -2522,24 +2567,66 @@ def _render_roof_layout_section(estimate: EstimateData):
 def _render_supply_selection_section(estimate: EstimateData):
     """支給品の商品ごと選択（2026-08-13 顧客要望 / 8-10会議アクション）。
 
-    チェックを外した商品は材料費へ移動し、単価マスターの価格×数量で計上する。
-    スナップショット（見積生成直後の支給品・材料費リスト）から毎回組み立て
-    直すため、チェックの付け外しを何度行っても壊れない。
+    v2見積（2026-08-15 ルールブック4条）: 支給品は大分類ではなく属性。
+    チェックした機器は「太陽光発電システム機器」カテゴリに残したまま
+    金額0円・備考「御支給品」にする（設置工事の工事費は0円にしない）。
+
+    v1見積: チェックを外した商品は材料費へ移動し、単価マスターの
+    価格×数量で計上する（従来動作）。
     """
+    from models.estimate_data import CategoryType as _CT
     from pricing.supply_selection import (
-        apply_supply_selection, item_key, snapshot_sections)
+        apply_supply_attribute, apply_supply_selection, initial_supply_flags,
+        item_key, snapshot_equipment, snapshot_sections)
+
+    v2_mode = any(c.category == _CT.EQUIPMENT
+                  for c in estimate.summary.categories)
 
     # スナップショットは見積オブジェクトごとに1回だけ作る
     if st.session_state.get("supply_snapshot_ref") != id(estimate):
-        st.session_state.supply_snapshot = snapshot_sections(estimate)
+        st.session_state.supply_snapshot = (
+            snapshot_equipment(estimate) if v2_mode
+            else snapshot_sections(estimate))
         st.session_state.supply_snapshot_ref = id(estimate)
-        st.session_state.supply_flags = {}
+        # 設計確定情報から自動で御支給品になった明細は初期チェックON
+        st.session_state.supply_flags = (
+            initial_supply_flags(estimate) if v2_mode else {})
         st.session_state.supply_applied = None
     snap = st.session_state.supply_snapshot
+    flags = st.session_state.supply_flags
+
+    if v2_mode:
+        items = snap.get("equipment", [])
+        if not items:
+            return
+        n_on = sum(1 for it in items if flags.get(item_key(it), False))
+        title = "📦 支給品の選択（商品ごと）"
+        if n_on:
+            title += f" — {n_on}件を御支給品（¥0）で計上中"
+        with st.expander(title, expanded=False):
+            st.caption(
+                "チェックした機器は御支給品として金額0円・備考「御支給品」で"
+                "計上します（明細は機器カテゴリに残ります。設置工事の工事費は"
+                "0円になりません）。")
+            cols = st.columns(2)
+            for i, it in enumerate(items):
+                k = item_key(it)
+                label = it.description + (
+                    f"（{it.remarks.splitlines()[0]}）" if it.remarks else "")
+                with cols[i % 2]:
+                    flags[k] = st.checkbox(
+                        f"{label} を支給品にする",
+                        value=flags.get(k, False), key=f"supply_{k}")
+        state = tuple(sorted(flags.items()))
+        if st.session_state.supply_applied != state:
+            apply_supply_attribute(estimate, snap, flags)
+            st.session_state.supply_applied = state
+            st.rerun()
+        return
+
     if not snap.get("supplied"):
         return
 
-    flags = st.session_state.supply_flags
     n_off = sum(1 for it in snap["supplied"]
                 if not flags.get(item_key(it), True))
     title = "📦 支給品の選択（商品ごと）"
@@ -2649,6 +2736,11 @@ def _render_step3_estimate():
         CategoryType.CONSTRUCTION: "🏗️",
         CategoryType.OVERHEAD: "💰",
         CategoryType.ADDITIONAL: "🔨",
+        # v2（2026-08-15 ルールブック4大分類）
+        CategoryType.SETUP: "🚧",
+        CategoryType.EQUIPMENT: "⚡",
+        CategoryType.WIRING: "🔌",
+        CategoryType.INSTALL: "🏗️",
     }
     tab_names = []
     display_cats = []

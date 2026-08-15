@@ -42,7 +42,12 @@ _ADDABLE_CATEGORIES = tuple(c for c in ESTIMATE_CATEGORIES if c != "特記事項
 # 項目構成（どの項目が載るか）を学習で変更しないカテゴリ（2026-08-13 顧客要望）。
 # 例外案件の item_add / item_suppress がデフォルト化する事故を防ぐ。
 # 単価学習（unit_price_override）は引き続き対象。
-_FIXED_STRUCTURE_CATEGORIES = ("支給品", "材料費")
+# v2の4大分類（2026-08-15 ルールブック3条: 構成は固定・設計確定情報から決まる）
+# も同様に構成学習の対象外。
+_FIXED_STRUCTURE_CATEGORIES = (
+    "支給品", "材料費",
+    "共通仮設工事", "太陽光発電システム機器", "電材", "設置工事",
+)
 
 # 同一カテゴリ内に同名（正規化摘要が同一）項目が複数ある場合の注記
 _DUP_NOTE = "（同名項目が複数あるため自動学習の対象外）"
@@ -253,6 +258,13 @@ def diff_estimates(ai: ParsedEstimate, official: ParsedEstimate) -> list:
     def _propose(kind: str, category: str, match_desc: str,
                  match_remarks: str, payload: dict):
         """ルール提案。同キー競合は参考表示（learnable=False）に落とす。"""
+        # v2の機器カテゴリは pricing_rules.yaml に対応リストが無く（単価は
+        # 単価マスター駆動）、unit_price_override を承認しても反映先が無い。
+        # 学習可能に見せて no-op になる事故を防ぎ、単価マスター修正へ誘導する
+        # （Codexレビュー指摘）
+        if category == "太陽光発電システム機器":
+            return False, ("（機器の単価は学習ではなく「産業用部材 単価マスター」"
+                           "で修正してください。参考表示）")
         key = (kind, category, match_desc, match_remarks)
         if key in proposed_keys:
             if proposed_keys[key] == payload:
